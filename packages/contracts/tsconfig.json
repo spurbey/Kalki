@@ -5,5 +5,11 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/index.ts", "src/states.ts", "src/states.test.ts"]
+  "include": [
+    "src/domain.test.ts",
+    "src/domain.ts",
+    "src/index.ts",
+    "src/states.test.ts",
+    "src/states.ts"
+  ]
 }
