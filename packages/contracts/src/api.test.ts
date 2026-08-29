@@ -181,6 +181,22 @@ describe('run and review commands', () => {
     ).toBe(false);
   });
 
+  it('rejects duplicate schema paths in one atomic set', () => {
+    const schema = {
+      path: 'schemas/tesla-history.yaml',
+      schema: { version: 1 },
+      schema_hash: hash,
+    };
+
+    expect(
+      RegisterSchemaInputSchema.safeParse({
+        task_id: 'task_1',
+        schemas: [schema, { ...schema, schema_hash: 'b'.repeat(64) }],
+        aggregate_schema_hash: hash,
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects test samples for more than ten tables', () => {
     const samples = Object.fromEntries(
       Array.from({ length: 11 }, (_, index) => [`table-${index}`, []]),

@@ -98,7 +98,21 @@ export const RegisterSchemaInputSchema = z
     schemas: z.array(SchemaRegistrationSchema).min(1).max(MAX_TABLES_PER_TASK),
     aggregate_schema_hash: Sha256Schema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const seenPaths = new Set<string>();
+
+    value.schemas.forEach((schema, index) => {
+      if (seenPaths.has(schema.path)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'schema paths must be unique within one registration',
+          path: ['schemas', index, 'path'],
+        });
+      }
+      seenPaths.add(schema.path);
+    });
+  });
 
 export const StartRunInputSchema = z
   .object({
