@@ -5,7 +5,22 @@ export const IdSchema = z.string().trim().min(1).max(128);
 export const SlugSchema = z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 export const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 export const TimestampSchema = z.iso.datetime({ offset: true });
-export const JsonObjectSchema = z.record(z.string(), z.unknown());
+export const MAX_TABLES_PER_TASK = 10;
+export const MAX_TEST_SAMPLE_RECORDS_PER_TABLE = 5;
+
+export type JsonObject = { [key: string]: JsonValue };
+export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
+
+export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([z.null(), z.boolean(), z.number().finite(), z.string(), z.array(JsonValueSchema), JsonObjectSchema]),
+);
+
+export const JsonObjectSchema: z.ZodType<JsonObject> = z.lazy(() =>
+  z.record(z.string(), JsonValueSchema).refine(value => {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  }, 'value must be a plain JSON object'),
+);
 
 export const WorkspaceRelativePathSchema = z
   .string()
@@ -32,10 +47,15 @@ export const PortableErrorSchema = z
   })
   .strict();
 
+export const DedupeKeySchema = z
+  .string()
+  .min(1)
+  .refine(value => new TextEncoder().encode(value).byteLength <= 512, 'dedupe key exceeds 512 UTF-8 bytes');
+
 export const ProvenanceParentSchema = z
   .object({
     table_slug: SlugSchema,
-    dedupe_key: z.string().min(1).max(512),
+    dedupe_key: DedupeKeySchema,
   })
   .strict();
 
@@ -68,11 +88,6 @@ export const ProvenanceSchema = z
   });
 
 export type Provenance = z.infer<typeof ProvenanceSchema>;
-
-export const DedupeKeySchema = z
-  .string()
-  .min(1)
-  .refine(value => new TextEncoder().encode(value).byteLength <= 512, 'dedupe key exceeds 512 UTF-8 bytes');
 
 export const RecordEnvelopeSchema = z
   .object({
@@ -127,10 +142,11 @@ export const TableSchema = z
   })
   .strict();
 
-export const BoundedSamplesSchema = z.record(
-  SlugSchema,
-  z.array(RecordEnvelopeSchema).max(5),
-);
+export const BoundedSamplesSchema = z
+  .record(SlugSchema, z.array(RecordEnvelopeSchema).max(MAX_TEST_SAMPLE_RECORDS_PER_TABLE))
+  .refine(value => Object.keys(value).length <= MAX_TABLES_PER_TASK, {
+    message: `test samples cannot contain more than ${MAX_TABLES_PER_TASK} tables`,
+  });
 
 export const RunSchema = z
   .object({
@@ -156,7 +172,84 @@ export const RunSchema = z
     finished_at: TimestampSchema.nullable(),
     updated_at: TimestampSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const approvalValues = [
+      value.approved_at,
+      value.approval_event_id,
+      value.approved_task_hash,
+      value.approved_schema_hash,
+      value.approved_pipeline_hash,
+    ];
+    const hasAnyApproval = approvalValues.some(item => item !== null);
+    const hasCompleteApproval = approvalValues.every(item => item !== null);
+
+    if (hasAnyApproval && !hasCompleteApproval) {
+      context.addIssue({
+        code: 'custom',
+        message: 'approval evidence must be entirely present or entirely absent',
+        path: ['approved_at'],
+      });
+    }
+
+    if (value.mode === 'test') {
+      if (value.status === 'awaiting_confirmation' || value.status === 'authorized' || value.status === 'finalizing') {
+        context.addIssue({
+          code: 'custom',
+          message: 'test runs cannot use production-only statuses',
+          path: ['status'],
+        });
+      }
+      if (hasAnyApproval) {
+        context.addIssue({
+          code: 'custom',
+          message: 'test runs cannot contain production approval evidence',
+          path: ['approved_at'],
+        });
+      }
+    }
+
+    const requiresApproval =
+      value.mode === 'production' &&
+      (value.status === 'authorized' ||
+        value.status === 'running' ||
+        value.status === 'finalizing' ||
+        value.status === 'completed');
+
+    if (requiresApproval && !hasCompleteApproval) {
+      context.addIssue({
+        code: 'custom',
+        message: 'this production status requires complete approval evidence',
+        path: ['approved_at'],
+      });
+    }
+
+    if (value.mode === 'production' && value.status === 'awaiting_confirmation' && hasAnyApproval) {
+      context.addIssue({
+        code: 'custom',
+        message: 'awaiting-confirmation runs cannot already contain approval evidence',
+        path: ['approved_at'],
+      });
+    }
+
+    if (hasCompleteApproval) {
+      const hashPairs = [
+        ['approved_task_hash', value.approved_task_hash, value.task_hash],
+        ['approved_schema_hash', value.approved_schema_hash, value.schema_hash],
+        ['approved_pipeline_hash', value.approved_pipeline_hash, value.pipeline_hash],
+      ] as const;
+
+      for (const [field, approvedHash, currentHash] of hashPairs) {
+        if (approvedHash !== currentHash) {
+          context.addIssue({
+            code: 'custom',
+            message: 'approved hash must match the current run hash',
+            path: [field],
+          });
+        }
+      }
+    }
+  });
 
 export const GateKindSchema = z.enum([
   'clarification',

@@ -180,4 +180,24 @@ describe('run and review commands', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('rejects test samples for more than ten tables', () => {
+    const samples = Object.fromEntries(
+      Array.from({ length: 11 }, (_, index) => [`table-${index}`, []]),
+    );
+
+    expect(
+      CompleteRunInputSchema.safeParse({
+        run_id: 'run_1',
+        outcome: 'completed',
+        task_hash: hash,
+        schema_hash: hash,
+        pipeline_hash: hash,
+        manifest: { command: 'test' },
+        samples,
+        table_counts: {},
+        error: null,
+      }).success,
+    ).toBe(false);
+  });
 });

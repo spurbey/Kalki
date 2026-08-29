@@ -4,6 +4,7 @@ import {
   GateKindSchema,
   IdSchema,
   JsonObjectSchema,
+  MAX_TABLES_PER_TASK,
   PortableErrorSchema,
   QuestionDecisionSchema,
   RecordEnvelopeSchema,
@@ -94,7 +95,7 @@ export const SchemaRegistrationSchema = z
 export const RegisterSchemaInputSchema = z
   .object({
     task_id: IdSchema,
-    schemas: z.array(SchemaRegistrationSchema).min(1).max(10),
+    schemas: z.array(SchemaRegistrationSchema).min(1).max(MAX_TABLES_PER_TASK),
     aggregate_schema_hash: Sha256Schema,
   })
   .strict();
