@@ -1,0 +1,24 @@
+{
+  "name": "kalki",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "scripts": {
+    "build": "npm run build -w @kalki/contracts",
+    "typecheck": "npm run typecheck -w @kalki/contracts",
+    "test": "npm run test -w @kalki/contracts",
+    "format:check": "prettier --check .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
