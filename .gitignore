@@ -1,0 +1,27 @@
+node_modules/
+dist/
+.data/
+.tmp/
+tmp/
+
+# Local specifications are working notes, not public repository content.
+docs/
+
+# Local configuration and credentials.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*.json
+
+coverage/
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+packages/framework-skill/scripts/.venv/
+apps/web/.vite/
