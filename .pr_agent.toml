@@ -1,0 +1,15 @@
+[github_app]
+pr_commands = [
+    "/agentic_describe",
+    "/agentic_review"
+]
+
+[review_agent]
+comments_location_policy = "both"
+inline_comments_severity_threshold = 2
+issues_user_guidelines = """
+Treat AGENTS.md, shared contracts, and explicit invariants in the changed code as authoritative. Prioritize correctness, data integrity, security, recovery behavior, and missing tests. Check explicit production consent and hash validation, test-data isolation, idempotent publication, compact tool outputs, portable sandbox paths, and the pinned TrueForge boundary. Avoid cosmetic findings unless they hide a real maintenance or correctness problem.
+"""
+compliance_user_guidelines = """
+Do not allow secrets in the repository, guessed /workspace paths, test rows in formal tables, generated operators writing directly to SQLite, browser clients calling TrueForge directly, domain mutations that bypass the shared service layer, or unpinned TrueForge integration behavior.
+"""
