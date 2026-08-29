@@ -6,6 +6,8 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "include": [
+    "src/api.test.ts",
+    "src/api.ts",
     "src/domain.test.ts",
     "src/domain.ts",
     "src/index.ts",
