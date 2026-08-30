@@ -5,5 +5,13 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/config.ts", "src/index.ts"]
+  "include": [
+    "src/config.ts",
+    "src/db/database.ts",
+    "src/db/migrations.ts",
+    "src/domain/errors.ts",
+    "src/domain/workbookService.test.ts",
+    "src/domain/workbookService.ts",
+    "src/index.ts"
+  ]
 }
