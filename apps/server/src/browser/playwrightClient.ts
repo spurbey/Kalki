@@ -1,16 +1,11 @@
-import type { BrowserStatus } from "@kalki/contracts";
+import {
+  PlaywrightToolResultSchema,
+  type BrowserStatus,
+  type PlaywrightToolResult,
+} from "@kalki/contracts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { config } from "../config.js";
-
-type ToolResult = {
-  content?: Array<{
-    type?: string;
-    text?: string;
-    data?: string;
-  }>;
-  isError?: boolean;
-};
 
 type BrowserTab = {
   index: number;
@@ -28,9 +23,8 @@ const unavailableStatus: BrowserStatus = {
   error: null,
 };
 
-function resultText(result: unknown): string {
-  if (!result || typeof result !== "object") return "";
-  const content = (result as ToolResult).content;
+function resultText(result: PlaywrightToolResult): string {
+  const content = result.content;
   if (!Array.isArray(content)) return "";
   return content
     .filter((item) => item.type === "text" && typeof item.text === "string")
@@ -38,9 +32,8 @@ function resultText(result: unknown): string {
     .join("\n");
 }
 
-function resultImage(result: unknown): Buffer | null {
-  if (!result || typeof result !== "object") return null;
-  const content = (result as ToolResult).content;
+function resultImage(result: PlaywrightToolResult): Buffer | null {
+  const content = result.content;
   if (!Array.isArray(content)) return null;
   const image = content.find(
     (item) => item.type === "image" && typeof item.data === "string",
@@ -98,8 +91,8 @@ export class PlaywrightBrowser {
         const current = aligned.find((tab) => tab.current) ?? aligned[0];
         const status: BrowserStatus = {
           available: true,
-          url: current?.url || null,
-          title: current?.title || null,
+          url: current?.url ? current.url.slice(0, 4000) : null,
+          title: current?.title ? current.title.slice(0, 1000) : null,
           tab_count: aligned.length,
           screenshot_at: this.screenshotAt,
           error: null,
@@ -124,8 +117,8 @@ export class PlaywrightBrowser {
       const current = aligned.find((tab) => tab.current) ?? aligned[0];
       return {
         available: true,
-        url: current?.url || url,
-        title: current?.title || null,
+        url: (current?.url || url).slice(0, 4000),
+        title: current?.title ? current.title.slice(0, 1000) : null,
         tab_count: aligned.length,
         screenshot_at: this.screenshotAt,
         error: null,
@@ -182,16 +175,15 @@ export class PlaywrightBrowser {
 
   private async readTabs(): Promise<BrowserTab[]> {
     const result = await this.callTool("browser_tabs", { action: "list" });
-    if ((result as ToolResult).isError) {
-      throw new Error(resultText(result) || "Playwright tab listing failed");
-    }
     return parseTabs(resultText(result));
   }
 
   private async alignResearchTab(tabs: BrowserTab[]): Promise<BrowserTab[]> {
     const current = tabs.find((tab) => tab.current);
     const research =
-      tabs.find((tab) => tab.url && tab.url !== "about:blank") ?? current;
+      current?.url && current.url !== "about:blank"
+        ? current
+        : (tabs.find((tab) => tab.url && tab.url !== "about:blank") ?? current);
     if (research && current?.index !== research.index) {
       await this.callTool("browser_tabs", {
         action: "select",
@@ -205,8 +197,10 @@ export class PlaywrightBrowser {
   private async callTool(name: string, args: Record<string, unknown>) {
     await this.connect();
     if (!this.client) throw new Error("Playwright client is not connected");
-    const result = await this.client.callTool({ name, arguments: args });
-    if ((result as ToolResult).isError) {
+    const result = PlaywrightToolResultSchema.parse(
+      await this.client.callTool({ name, arguments: args }),
+    );
+    if (result.isError) {
       throw new Error(resultText(result) || `Playwright tool '${name}' failed`);
     }
     return result;

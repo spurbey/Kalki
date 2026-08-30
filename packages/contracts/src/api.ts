@@ -223,6 +223,7 @@ export const HealthResponseSchema = z
 const BrowserUrlSchema = z
   .string()
   .trim()
+  .max(4000)
   .url()
   .refine((value) => {
     const protocol = new URL(value).protocol;
@@ -243,6 +244,25 @@ export const BrowserStatusSchema = z
 export const BrowserStatusResponseSchema = z.object({ data: BrowserStatusSchema }).strict();
 
 export const BrowserNavigateInputSchema = z.object({ url: BrowserUrlSchema }).strict();
+
+export const PlaywrightToolResultSchema = z
+  .object({
+    content: z
+      .array(
+        z
+          .object({
+            type: z.string(),
+            text: z.string().optional(),
+            data: z.string().optional(),
+          })
+          .passthrough(),
+      )
+      .optional(),
+    isError: z.boolean().optional(),
+  })
+  .passthrough();
+
+export type PlaywrightToolResult = z.infer<typeof PlaywrightToolResultSchema>;
 
 export const WorkbookResponseSchema = z.object({ data: WorkbookSchema }).strict();
 export const TaskResponseSchema = z.object({ data: TaskSchema }).strict();
