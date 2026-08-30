@@ -3,11 +3,13 @@ import {
   Activity,
   FileText,
   FlaskConical,
+  Globe2,
   Paperclip,
   Rows3,
   Table2,
 } from "lucide-react";
 import { ArtifactsView } from "../views/ArtifactsView.js";
+import { ResearchView } from "../views/ResearchView.js";
 import { RunsView } from "../views/RunsView.js";
 import { SchemaView } from "../views/SchemaView.js";
 import { TablesView } from "../views/TablesView.js";
@@ -15,13 +17,14 @@ import { TaskView } from "../views/TaskView.js";
 import { TestView } from "../views/TestView.js";
 
 export type WorkspaceView =
-  "task" | "schema" | "test" | "tables" | "runs" | "artifacts";
+  "research" | "task" | "schema" | "test" | "tables" | "runs" | "artifacts";
 
 const views: Array<{
   id: WorkspaceView;
   label: string;
   icon: typeof FileText;
 }> = [
+  { id: "research", label: "Research", icon: Globe2 },
   { id: "task", label: "Task", icon: FileText },
   { id: "schema", label: "Schema", icon: Rows3 },
   { id: "test", label: "Test", icon: FlaskConical },
@@ -65,6 +68,7 @@ export function WorkspacePane({
         })}
       </nav>
       <div className="workspace-view">
+        {activeView === "research" ? <ResearchView /> : null}
         {activeView === "task" ? (
           <TaskView
             task={task}

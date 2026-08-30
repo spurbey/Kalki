@@ -1,6 +1,8 @@
 import {
   ApiErrorResponseSchema,
   HealthResponseSchema,
+  BrowserNavigateInputSchema,
+  BrowserStatusResponseSchema,
   TableRowsResponseSchema,
   TaskResponseSchema,
   TrueForgeTurnResponseSchema,
@@ -9,6 +11,8 @@ import {
   WorkbookSnapshotResponseSchema,
   type AgentQuestion,
   type AnswerQuestionInput,
+  type BrowserNavigateInput,
+  type BrowserStatus,
   type CreateTurnInput,
   type CreateWorkbookInput,
   type CreateTaskInput,
@@ -61,6 +65,32 @@ async function request<T>(
 
 export async function getHealth(): Promise<HealthResponse> {
   return request("/healthz", HealthResponseSchema);
+}
+
+export async function getBrowserStatus(): Promise<BrowserStatus> {
+  const response = await request(
+    "/api/v1/browser/status",
+    BrowserStatusResponseSchema,
+  );
+  return response.data;
+}
+
+export async function navigateBrowser(
+  input: BrowserNavigateInput,
+): Promise<BrowserStatus> {
+  const response = await request(
+    "/api/v1/browser/navigate",
+    BrowserStatusResponseSchema,
+    {
+      method: "POST",
+      body: JSON.stringify(BrowserNavigateInputSchema.parse(input)),
+    },
+  );
+  return response.data;
+}
+
+export function browserScreenshotUrl(version: number): string {
+  return `/api/v1/browser/screenshot?v=${version}`;
 }
 
 export async function createWorkbook(
