@@ -54,7 +54,7 @@ function createServer(workbooks: WorkbookService) {
     'get_workbook_context',
     {
       description: 'Read compact workbook state without returning formal table rows.',
-      inputSchema: GetWorkbookContextInputSchema.shape,
+      inputSchema: GetWorkbookContextInputSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS,
     },
     (input) => execute(() => workbooks.getWorkbookContext(GetWorkbookContextInputSchema.parse(input))),
@@ -64,7 +64,7 @@ function createServer(workbooks: WorkbookService) {
     'register_task',
     {
       description: 'Register the current task contract for explicit review.',
-      inputSchema: RegisterTaskInputSchema.shape,
+      inputSchema: RegisterTaskInputSchema,
     },
     (input) => execute(() => workbooks.registerTask(RegisterTaskInputSchema.parse(input))),
   );
