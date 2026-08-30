@@ -8,8 +8,8 @@ export function openDatabase(path: string): Database.Database {
 
   const database = new Database(path);
   database.pragma('foreign_keys = ON');
-  database.pragma('journal_mode = WAL');
   database.pragma('busy_timeout = 5000');
+  database.pragma('journal_mode = WAL');
   database.pragma('synchronous = NORMAL');
   database.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
 
