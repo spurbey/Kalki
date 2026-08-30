@@ -14,4 +14,7 @@
 - The human and TrueForge agent must observe the same persistent Playwright browser context through the Research workspace.
 - Prefer narrow modules around real ownership boundaries. Do not add more behavior to `index.ts` or `WorkbookService` when a focused existing or adjacent module owns it.
 - Judge agent changes with an end-to-end task and the usefulness of its result, not only tool success or test counts.
+- Source tables may be final outputs. Use `transforms: []` instead of adding pass-through code.
+- Fix shared runtime blockers instead of bypassing the pipeline CLI or workbook production gate.
+- When the framework skill changes, push the commit and update TrueForge's configured skill ref before testing a fresh session.
 - Keep local implementation progress in `docs/product-progress.md` and `docs/product-changelog.md`; `docs/` remains ignored.
