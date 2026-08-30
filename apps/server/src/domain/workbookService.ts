@@ -343,6 +343,7 @@ export class WorkbookService {
     if (question.status !== 'pending') {
       throw new DomainError('Question is no longer pending', 'question_not_pending', 409);
     }
+    this.resolveQuestionTransition(question, input);
 
     this.database
       .prepare('UPDATE agent_questions SET status = ? WHERE id = ? AND status = ?')
@@ -378,30 +379,7 @@ export class WorkbookService {
       throw new DomainError('Question is not being submitted', 'question_not_submitting', 409);
     }
 
-    const task = question.task_id
-      ? TaskSchema.parse(this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(question.task_id))
-      : null;
-    let nextState: Task['state'] | null = null;
-    if (question.gate_kind === 'task_review') {
-      if (!task) throw new DomainError('Task review question is missing its task', 'question_task_missing', 409);
-      if (input.decision === 'approve') nextState = 'exploring';
-      else if (input.decision === 'revise') nextState = 'aligning';
-      else if (input.decision === 'cancel') nextState = 'cancelled';
-      else throw new DomainError('Task review requires approve, revise, or cancel', 'invalid_question_decision', 400);
-    } else if (question.gate_kind === 'schema_review') {
-      if (!task) throw new DomainError('Schema review question is missing its task', 'question_task_missing', 409);
-      if (input.decision === 'approve') nextState = 'building';
-      else if (input.decision === 'revise') nextState = 'exploring';
-      else if (input.decision === 'cancel') nextState = 'cancelled';
-      else throw new DomainError('Schema review requires approve, revise, or cancel', 'invalid_question_decision', 400);
-    } else {
-      throw new DomainError('This question gate is not implemented in the current slice', 'unsupported_question_gate', 409);
-    }
-
-    if (task && nextState && !canTransitionTask(task.state, nextState)) {
-      throw new DomainError(`Task cannot move from '${task.state}' to '${nextState}'`, 'invalid_task_state', 409);
-    }
-
+    const { task, nextState } = this.resolveQuestionTransition(question, input);
     const timestamp = new Date().toISOString();
     this.database.transaction(() => {
       this.database
@@ -434,6 +412,37 @@ export class WorkbookService {
     })();
 
     return this.getQuestion(question.id);
+  }
+
+  private resolveQuestionTransition(question: AgentQuestion, input: AnswerQuestionInput) {
+    const task = question.task_id
+      ? TaskSchema.parse(this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(question.task_id))
+      : null;
+    let nextState: Task['state'] | null = null;
+    if (question.gate_kind === 'task_review') {
+      if (!task) throw new DomainError('Task review question is missing its task', 'question_task_missing', 409);
+      if (input.decision === 'approve') nextState = 'exploring';
+      else if (input.decision === 'revise') nextState = 'aligning';
+      else if (input.decision === 'cancel') nextState = 'cancelled';
+      else throw new DomainError('Task review requires approve, revise, or cancel', 'invalid_question_decision', 400);
+    } else if (question.gate_kind === 'schema_review') {
+      if (!task) throw new DomainError('Schema review question is missing its task', 'question_task_missing', 409);
+      if (input.decision === 'approve') nextState = 'building';
+      else if (input.decision === 'revise') nextState = 'exploring';
+      else if (input.decision === 'cancel') nextState = 'cancelled';
+      else throw new DomainError('Schema review requires approve, revise, or cancel', 'invalid_question_decision', 400);
+    } else if (question.gate_kind === 'clarification') {
+      if (input.decision !== 'free_text') {
+        throw new DomainError('Clarification requires a free-text decision', 'invalid_question_decision', 400);
+      }
+    } else {
+      throw new DomainError('This question gate is not implemented in the current slice', 'unsupported_question_gate', 409);
+    }
+
+    if (task && nextState && !canTransitionTask(task.state, nextState)) {
+      throw new DomainError(`Task cannot move from '${task.state}' to '${nextState}'`, 'invalid_task_state', 409);
+    }
+    return { task, nextState };
   }
 
   getWorkbookContext(input: GetWorkbookContextInput) {

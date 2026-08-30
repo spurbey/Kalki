@@ -67,14 +67,10 @@ async function persistPendingQuestion(workbookId: string, turn: TrueForgeTurnInp
   if (!question) return null;
 
   const snapshot = workbooks.getSnapshot(workbookId);
-  const task =
-    snapshot.tasks.find((candidate) =>
-      [
-        'awaiting_task_confirmation',
-        'awaiting_schema_review',
-        'awaiting_production_confirmation',
-      ].includes(candidate.state),
-    ) ?? (snapshot.tasks.length === 1 ? snapshot.tasks[0] : null);
+  if (snapshot.tasks.length > 1) {
+    throw new DomainError('Cannot match the question to one task', 'ambiguous_question_task', 409);
+  }
+  const task = snapshot.tasks[0] ?? null;
   const run = snapshot.runs.find((candidate) => candidate.status === 'awaiting_confirmation') ?? null;
 
   return workbooks.savePendingQuestion(workbookId, {
