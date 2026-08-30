@@ -20,4 +20,6 @@ def transform(self, records, context: RunContext):
     yield RecordEnvelope(...)
 ```
 
-Read configuration from `context.config`. Sources use `context.http` only for endpoints supported by recorded research evidence; transformers perform no network calls. Do not write JSONL directly, access SQLite, read secrets, or guess the workspace path.
+Read configuration from `context.config`. For a browser-backed source, the coordinator navigates to the reviewed URL before execution and the operator reads the captured response through safe Playwright tools exposed by `mcp_client`. Transformers perform no network calls.
+
+Do not call navigation, evaluation, or interaction tools from Code Mode; TrueForge blocks those tools as destructive. Do not write JSONL directly, access SQLite, read secrets, bypass approval checks, or guess the workspace path.
