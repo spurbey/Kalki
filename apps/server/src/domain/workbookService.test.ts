@@ -114,6 +114,89 @@ describe('workbook persistence', () => {
     }
   });
 
+  it('validates review decisions and completes clarifications', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'kalki-'));
+    const path = join(directory, 'kalki.db');
+    const database = openDatabase(path);
+
+    try {
+      const service = new WorkbookService(database);
+      const workbook = service.createWorkbook({ title: 'Tesla research' });
+      const task = service.createTask(workbook.id, {
+        slug: 'tesla-top-prices',
+        title: 'Tesla top prices',
+        objective: 'Find the highest TSLA prices.',
+      });
+      database.prepare("UPDATE tasks SET state = 'awaiting_task_confirmation' WHERE id = ?").run(task.id);
+      service.connectTrueForgeSession(workbook.id, 'session-1');
+      const timestamp = new Date().toISOString();
+      service.saveTrueForgeTurn(workbook.id, {
+        id: 'turn-question',
+        sessionId: 'session-1',
+        previousTurnId: null,
+        status: 'done',
+        requiredActions: [],
+        createdAt: timestamp,
+        finishedAt: timestamp,
+      });
+
+      const question = {
+        taskId: task.id,
+        runId: null,
+        questionTurnId: 'turn-question',
+        threadId: 'main',
+        options: ['Continue'],
+      };
+      const answer = {
+        question_turn_id: 'turn-question',
+        thread_id: 'main',
+      };
+      service.savePendingQuestion(workbook.id, {
+        ...question,
+        gateKind: 'task_review',
+        questionEventId: 'event-task-review',
+        toolCallId: 'tool-task-review',
+        questionText: 'Approve this task?',
+      });
+      expect(() =>
+        service.markQuestionSubmitting(workbook.id, 'tool-task-review', {
+          ...answer,
+          question_event_id: 'event-task-review',
+          answer: 'Something else',
+          decision: 'free_text',
+          gate_kind: 'task_review',
+        }),
+      ).toThrow();
+      expect(service.getPendingQuestion(workbook.id)?.status).toBe('pending');
+
+      service.savePendingQuestion(workbook.id, {
+        ...question,
+        gateKind: 'clarification',
+        questionEventId: 'event-clarification',
+        toolCallId: 'tool-clarification',
+        questionText: 'Which date range?',
+      });
+      const clarification = {
+        ...answer,
+        question_event_id: 'event-clarification',
+        answer: 'Five years',
+        decision: 'free_text' as const,
+        gate_kind: 'clarification' as const,
+      };
+      service.markQuestionSubmitting(workbook.id, 'tool-clarification', clarification);
+      service.completeQuestion(workbook.id, 'tool-clarification', clarification, 'turn-question');
+
+      const saved = database
+        .prepare('SELECT status FROM agent_questions WHERE tool_call_id = ?')
+        .get('tool-clarification') as { status: string };
+      expect(saved.status).toBe('answered');
+      expect(service.getSnapshot(workbook.id).tasks[0]?.state).toBe('awaiting_task_confirmation');
+    } finally {
+      database.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('persists reviewed schemas and a test run', () => {
     const directory = mkdtempSync(join(tmpdir(), 'kalki-'));
     const path = join(directory, 'kalki.db');

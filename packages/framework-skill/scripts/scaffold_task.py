@@ -9,17 +9,15 @@ def main() -> None:
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--workbook-id", required=True)
     parser.add_argument("--task-id", required=True)
-    parser.add_argument("--example", default="tesla")
     args = parser.parse_args()
 
-    skill_root = Path(__file__).resolve().parents[1]
-    example = skill_root / "examples" / args.example
     workspace = Path(args.workspace).resolve()
-    if not example.is_dir():
-        raise SystemExit(f"unknown example: {args.example}")
-
     workspace.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(example, workspace, dirs_exist_ok=True)
+    for relative in ("research", "schemas", "generated/models", "operators", "pipelines", "runs", "artifacts"):
+        (workspace / relative).mkdir(parents=True, exist_ok=True)
+    task_path = workspace / "task.md"
+    if not task_path.exists():
+        task_path.write_text("# Task\n\n", encoding="utf-8")
     shutil.copytree(
         Path(__file__).parent / "kalki_runtime",
         workspace / "kalki_runtime",
@@ -34,11 +32,14 @@ def main() -> None:
         encoding="utf-8",
     )
     (workspace / "AGENTS.md").write_text(
-        "# Kalki Task Workspace\n\nUse the mounted kalki-framework skill and keep full records in workspace files.\n",
+        "# Kalki Task Workspace\n\n"
+        "Read the mounted kalki-framework skill before editing workflow files.\n"
+        "Generate source code from recorded research evidence, use the current working directory, "
+        "and keep full records under runs/.\n",
         encoding="utf-8",
     )
     (workspace / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
-    print(json.dumps({"ok": True, "workspace": str(workspace), "example": args.example}, separators=(",", ":")))
+    print(json.dumps({"ok": True, "workspace": str(workspace)}, separators=(",", ":")))
 
 
 if __name__ == "__main__":

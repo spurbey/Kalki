@@ -24,6 +24,15 @@ interface TrueForgeClientOptions {
   frameworkSkillName: string;
 }
 
+export interface PendingTrueForgeQuestion {
+  questionEventId: string;
+  questionTurnId: string;
+  threadId: string;
+  toolCallId: string;
+  question: string;
+  options: string[];
+}
+
 export class TrueForgeClient {
   constructor(private readonly options: TrueForgeClientOptions) {}
 
@@ -93,13 +102,140 @@ export class TrueForgeClient {
     sessionId: string,
     input: string,
   ): Promise<TrueForgeTurnInput> {
+    return this.createTurnWithInput(sessionId, [
+      { type: "user.message", content: input },
+    ]);
+  }
+
+  async answerQuestion(
+    sessionId: string,
+    input: { threadId: string; toolCallId: string; content: string },
+  ): Promise<TrueForgeTurnInput> {
+    return this.createTurnWithInput(sessionId, [
+      {
+        type: "user.tool_response",
+        thread_id: input.threadId,
+        tool_call_id: input.toolCallId,
+        content: input.content,
+      },
+    ]);
+  }
+
+  async getPendingQuestion(
+    sessionId: string,
+    turn: TrueForgeTurnInput,
+  ): Promise<PendingTrueForgeQuestion | null> {
+    const action = turn.requiredActions.find((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+      }
+      return (value as Record<string, unknown>).type === "tool.response_required";
+    });
+    if (!action || typeof action !== "object" || Array.isArray(action)) {
+      return null;
+    }
+
+    const required = action as Record<string, unknown>;
+    const questionEventId = IdSchema.parse(required.id);
+    const threadId = IdSchema.parse(required.thread_id);
+    const refs = required.tool_calls;
+    if (!Array.isArray(refs) || refs.length === 0) {
+      throw new Error("TrueForge question action did not include a tool call");
+    }
+
+    const ref = refs[0];
+    if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
+      throw new Error("TrueForge question action included an invalid tool call");
+    }
+    const toolCall = ref as Record<string, unknown>;
+    const toolCallId = IdSchema.parse(toolCall.id);
+    const sourceEventId = IdSchema.parse(toolCall.source_event_id);
+    const events = await this.listTurnEvents(sessionId, turn.id);
+    const source = events.find((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+      }
+      return (value as Record<string, unknown>).id === sourceEventId;
+    });
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      throw new Error("TrueForge question source event was not found");
+    }
+
+    const calls = (source as Record<string, unknown>).tool_calls;
+    const call = Array.isArray(calls)
+      ? calls.find((value) => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) {
+            return false;
+          }
+          return (value as Record<string, unknown>).id === toolCallId;
+        })
+      : null;
+    if (!call || typeof call !== "object" || Array.isArray(call)) {
+      throw new Error("TrueForge question tool call was not found");
+    }
+
+    const callInfo = call as Record<string, unknown>;
+    const toolInfo = callInfo.tool_info;
+    const functionCall = callInfo.function;
+    if (
+      !toolInfo ||
+      typeof toolInfo !== "object" ||
+      Array.isArray(toolInfo) ||
+      (toolInfo as Record<string, unknown>).name !== "ask_user_question" ||
+      !functionCall ||
+      typeof functionCall !== "object" ||
+      Array.isArray(functionCall)
+    ) {
+      throw new Error("TrueForge required action was not an ask_user_question call");
+    }
+
+    const rawArguments = (functionCall as Record<string, unknown>).arguments;
+    let argumentsValue: unknown;
+    try {
+      argumentsValue = JSON.parse(String(rawArguments ?? "{}"));
+    } catch {
+      throw new Error("TrueForge question arguments were not valid JSON");
+    }
+    if (
+      !argumentsValue ||
+      typeof argumentsValue !== "object" ||
+      Array.isArray(argumentsValue)
+    ) {
+      throw new Error("TrueForge question arguments were invalid");
+    }
+    const questionValue = argumentsValue as Record<string, unknown>;
+    const question = questionValue.question;
+    const options = questionValue.options;
+    if (
+      typeof question !== "string" ||
+      !question.trim() ||
+      !Array.isArray(options) ||
+      options.some((value) => typeof value !== "string")
+    ) {
+      throw new Error("TrueForge question arguments were missing question options");
+    }
+
+    return {
+      questionEventId,
+      questionTurnId: turn.id,
+      threadId,
+      toolCallId,
+      question: question.trim(),
+      options: options as string[],
+    };
+  }
+
+  private async createTurnWithInput(
+    sessionId: string,
+    input: unknown[],
+  ): Promise<TrueForgeTurnInput> {
     const response = await fetch(
       `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          input: [{ type: "user.message", content: input }],
+          input,
           previous_turn_id: "auto",
           stream: false,
         }),
@@ -107,6 +243,25 @@ export class TrueForgeClient {
       },
     );
     return this.parseTurn(await this.readJson(response, "turn creation"));
+  }
+
+  private async listTurnEvents(
+    sessionId: string,
+    turnId: string,
+  ): Promise<unknown[]> {
+    const response = await fetch(
+      `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/events?limit=100&order=asc`,
+      { signal: AbortSignal.timeout(requestTimeoutMs) },
+    );
+    const payload = await this.readJson(response, "turn event list");
+    if (!payload || typeof payload !== "object" || !("data" in payload)) {
+      throw new Error("TrueForge event response did not include data");
+    }
+    const data = (payload as { data?: unknown }).data;
+    if (!Array.isArray(data)) {
+      throw new Error("TrueForge event response data was invalid");
+    }
+    return data;
   }
 
   async getTurn(
