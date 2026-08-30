@@ -1,7 +1,9 @@
 import { serve } from '@hono/node-server';
 import {
+  type GetWorkbookContextData,
   GetWorkbookContextInputSchema,
   READ_ONLY_TOOL_ANNOTATIONS,
+  type RegisterTaskData,
   RegisterTaskInputSchema,
   WorkbookToolResultSchema,
 } from '@kalki/contracts';
@@ -21,7 +23,7 @@ function response(result: unknown) {
   };
 }
 
-function execute(action: () => Record<string, unknown>) {
+function execute(action: () => GetWorkbookContextData | RegisterTaskData) {
   try {
     return response({ ok: true, data: action() });
   } catch (error) {
@@ -71,7 +73,10 @@ function createServer(workbooks: WorkbookService) {
 }
 
 export function startWorkbookMcp(workbooks: WorkbookService) {
-  if (!config.mcpToken) throw new Error('KALKI_MCP_TOKEN must be set');
+  if (!config.mcpToken) {
+    console.warn('KALKI_MCP_TOKEN is unset; workbook MCP is disabled');
+    return;
+  }
 
   const app = new Hono();
   app.get('/healthz', (c) => c.json({ ok: true }));

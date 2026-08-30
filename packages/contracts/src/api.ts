@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import {
+  AgentQuestionSchema,
+  ArtifactSchema,
   BoundedSamplesSchema,
   GateKindSchema,
+  GeneratedSkillSchema,
   IdSchema,
   JsonObjectSchema,
   MAX_TABLES_PER_TASK,
@@ -16,7 +19,7 @@ import {
   WorkbookSnapshotSchema,
   WorkspaceRelativePathSchema,
 } from './domain.js';
-import { RunModeSchema } from './states.js';
+import { RunModeSchema, RunStatusSchema, TableKindSchema } from './states.js';
 
 const TaskMarkdownSchema = z
   .string()
@@ -45,6 +48,65 @@ export const CreateTaskInputSchema = z
 export const CreateTurnInputSchema = z
   .object({
     input: z.string().trim().min(1).max(32_768),
+  })
+  .strict();
+
+export const GetWorkbookContextDataSchema = z
+  .object({
+    workbook: WorkbookSchema.pick({
+      id: true,
+      title: true,
+      trueforge_session_id: true,
+      current_trueforge_turn_id: true,
+    }),
+    task: TaskSchema.pick({
+      id: true,
+      state: true,
+      task_path: true,
+      task_hash: true,
+    }).nullable(),
+    tables: z.array(
+      z
+        .object({
+          id: IdSchema,
+          slug: SlugSchema,
+          kind: TableKindSchema,
+          schema_hash: Sha256Schema,
+        })
+        .strict(),
+    ),
+    aggregate_schema_hash: Sha256Schema.nullable(),
+    runs: z.array(
+      z
+        .object({
+          id: IdSchema,
+          mode: RunModeSchema,
+          status: RunStatusSchema,
+          hashes: z
+            .object({
+              task: Sha256Schema,
+              schema: Sha256Schema,
+              pipeline: Sha256Schema,
+            })
+            .strict(),
+          counts: z.object({ formal_rows: z.number().int().nonnegative() }).strict(),
+        })
+        .strict(),
+    ),
+    pending_question: AgentQuestionSchema.nullable(),
+    artifacts: z.array(ArtifactSchema),
+    generated_skills: z.array(GeneratedSkillSchema),
+    next_expected_action: z.string().min(1).max(100),
+  })
+  .strict();
+
+export const RegisterTaskDataSchema = z
+  .object({
+    task_id: IdSchema,
+    state: z.literal('awaiting_task_confirmation'),
+    task_path: WorkspaceRelativePathSchema,
+    task_hash: Sha256Schema,
+    next_action: z.literal('ask_task_review'),
   })
   .strict();
 
@@ -309,6 +371,10 @@ export const WORKBOOK_TOOL_DEFINITIONS = [
 export type CreateWorkbookInput = z.infer<typeof CreateWorkbookInputSchema>;
 export type CreateTaskInput = z.infer<typeof CreateTaskInputSchema>;
 export type CreateTurnInput = z.infer<typeof CreateTurnInputSchema>;
+export type GetWorkbookContextData = z.infer<
+  typeof GetWorkbookContextDataSchema
+>;
+export type RegisterTaskData = z.infer<typeof RegisterTaskDataSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;

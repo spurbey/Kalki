@@ -2,9 +2,11 @@ import {
   type CreateTaskInput,
   type CreateWorkbookInput,
   type GetWorkbookContextInput,
+  GetWorkbookContextDataSchema,
   GetWorkbookContextInputSchema,
   IdSchema,
   type RegisterTaskInput,
+  RegisterTaskDataSchema,
   RegisterTaskInputSchema,
   TaskSchema,
   type TrueForgeTurn,
@@ -210,7 +212,7 @@ export class WorkbookService {
     else if (task.state === 'aligning') nextExpectedAction = 'author_task';
     else if (task.state === 'awaiting_task_confirmation') nextExpectedAction = 'ask_task_review';
 
-    return {
+    return GetWorkbookContextDataSchema.parse({
       workbook: {
         id: snapshot.workbook.id,
         title: snapshot.workbook.title,
@@ -247,7 +249,7 @@ export class WorkbookService {
       artifacts: snapshot.artifacts,
       generated_skills: snapshot.generated_skills,
       next_expected_action: nextExpectedAction,
-    };
+    });
   }
 
   registerTask(input: RegisterTaskInput) {
@@ -262,13 +264,13 @@ export class WorkbookService {
       throw new DomainError('task_hash does not match task_markdown', 'task_hash_mismatch', 400);
     }
 
-    const result = {
+    const result = RegisterTaskDataSchema.parse({
       task_id: task.id,
       state: 'awaiting_task_confirmation' as const,
       task_path: registration.task_path,
       task_hash: registration.task_hash,
       next_action: 'ask_task_review',
-    };
+    });
     if (
       task.state === 'awaiting_task_confirmation' &&
       task.task_path === registration.task_path &&
