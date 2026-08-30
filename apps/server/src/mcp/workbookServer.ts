@@ -3,8 +3,12 @@ import {
   type GetWorkbookContextData,
   GetWorkbookContextInputSchema,
   READ_ONLY_TOOL_ANNOTATIONS,
+  type RegisterSchemaData,
+  RegisterSchemaInputSchema,
   type RegisterTaskData,
   RegisterTaskInputSchema,
+  type StartRunData,
+  StartRunInputSchema,
   WorkbookToolResultSchema,
 } from '@kalki/contracts';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -23,7 +27,7 @@ function response(result: unknown) {
   };
 }
 
-function execute(action: () => GetWorkbookContextData | RegisterTaskData) {
+function execute(action: () => GetWorkbookContextData | RegisterTaskData | RegisterSchemaData | StartRunData) {
   try {
     return response({ ok: true, data: action() });
   } catch (error) {
@@ -67,6 +71,24 @@ function createServer(workbooks: WorkbookService) {
       inputSchema: RegisterTaskInputSchema,
     },
     (input) => execute(() => workbooks.registerTask(RegisterTaskInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'register_schema',
+    {
+      description: 'Register the complete schema set atomically for explicit review.',
+      inputSchema: RegisterSchemaInputSchema,
+    },
+    (input) => execute(() => workbooks.registerSchema(RegisterSchemaInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'start_run',
+    {
+      description: 'Create an identified test run or production run awaiting consent.',
+      inputSchema: StartRunInputSchema,
+    },
+    (input) => execute(() => workbooks.startRun(StartRunInputSchema.parse(input))),
   );
 
   return server;
