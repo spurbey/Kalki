@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -14,11 +15,29 @@ describe('workbook persistence', () => {
       const firstDatabase = openDatabase(path);
       const firstService = new WorkbookService(firstDatabase);
       const workbook = firstService.createWorkbook({ title: 'Tesla research' });
-      firstService.createTask(workbook.id, {
+      const task = firstService.createTask(workbook.id, {
         slug: 'tesla-top-prices',
         title: 'Tesla top prices',
         objective: 'Find the highest TSLA prices.',
       });
+      const taskMarkdown = '# Task Contract\r\n\r\nFind the highest TSLA prices.\r\n';
+      const taskHash = createHash('sha256').update(taskMarkdown.replace(/\r\n?/g, '\n')).digest('hex');
+      expect(() =>
+        firstService.registerTask({
+          task_id: task.id,
+          task_path: 'task.md',
+          task_markdown: taskMarkdown,
+          task_hash: '0'.repeat(64),
+        }),
+      ).toThrow();
+      const registration = {
+        task_id: task.id,
+        task_path: 'task.md',
+        task_markdown: taskMarkdown,
+        task_hash: taskHash,
+      };
+      firstService.registerTask(registration);
+      firstService.registerTask(registration);
       firstDatabase.close();
 
       const reopenedDatabase = openDatabase(path);
@@ -27,7 +46,9 @@ describe('workbook persistence', () => {
 
       expect(snapshot.workbook.title).toBe('Tesla research');
       expect(snapshot.tasks).toHaveLength(1);
-      expect(snapshot.tasks[0]?.state).toBe('aligning');
+      expect(snapshot.tasks[0]?.state).toBe('awaiting_task_confirmation');
+      expect(snapshot.tasks[0]?.task_path).toBe('task.md');
+      expect(snapshot.tasks[0]?.task_hash).toBe(taskHash);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

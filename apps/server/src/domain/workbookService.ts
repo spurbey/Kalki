@@ -1,7 +1,13 @@
 import {
   type CreateTaskInput,
   type CreateWorkbookInput,
+  type GetWorkbookContextInput,
+  GetWorkbookContextDataSchema,
+  GetWorkbookContextInputSchema,
   IdSchema,
+  type RegisterTaskInput,
+  RegisterTaskDataSchema,
+  RegisterTaskInputSchema,
   TaskSchema,
   type TrueForgeTurn,
   type TrueForgeTurnInput,
@@ -11,7 +17,7 @@ import {
   WorkbookSnapshotSchema,
 } from '@kalki/contracts';
 import Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { DomainError } from './errors.js';
 
 export class WorkbookService {
@@ -183,6 +189,124 @@ export class WorkbookService {
 
     const row = this.database.prepare('SELECT * FROM trueforge_turns WHERE id = ?').get(turn.id);
     return this.parseTrueForgeTurn(row);
+  }
+
+  getWorkbookContext(input: GetWorkbookContextInput) {
+    const context = GetWorkbookContextInputSchema.parse(input);
+    const snapshot = this.getSnapshot(context.workbook_id);
+    const task = context.task_id
+      ? snapshot.tasks.find((candidate) => candidate.id === context.task_id)
+      : snapshot.tasks.length === 1
+        ? snapshot.tasks[0]
+        : null;
+
+    if (context.task_id && !task) {
+      throw new DomainError(`Task '${context.task_id}' was not found in this workbook`, 'task_not_found', 404);
+    }
+    if (!input.task_id && snapshot.tasks.length > 1) {
+      throw new DomainError('task_id is required when a workbook has multiple tasks', 'ambiguous_task', 409);
+    }
+
+    let nextExpectedAction = 'continue_workflow';
+    if (!task) nextExpectedAction = 'create_task';
+    else if (task.state === 'aligning') nextExpectedAction = 'author_task';
+    else if (task.state === 'awaiting_task_confirmation') nextExpectedAction = 'ask_task_review';
+
+    return GetWorkbookContextDataSchema.parse({
+      workbook: {
+        id: snapshot.workbook.id,
+        title: snapshot.workbook.title,
+        trueforge_session_id: snapshot.workbook.trueforge_session_id,
+        current_trueforge_turn_id: snapshot.workbook.current_trueforge_turn_id,
+      },
+      task: task
+        ? {
+            id: task.id,
+            state: task.state,
+            task_path: task.task_path,
+            task_hash: task.task_hash,
+          }
+        : null,
+      tables: snapshot.tables.map((table) => ({
+        id: table.id,
+        slug: table.slug,
+        kind: table.kind,
+        schema_hash: table.schema_hash,
+      })),
+      aggregate_schema_hash: null,
+      runs: snapshot.runs.map((run) => ({
+        id: run.id,
+        mode: run.mode,
+        status: run.status,
+        hashes: {
+          task: run.task_hash,
+          schema: run.schema_hash,
+          pipeline: run.pipeline_hash,
+        },
+        counts: { formal_rows: run.published_row_count },
+      })),
+      pending_question: snapshot.pending_question,
+      artifacts: snapshot.artifacts,
+      generated_skills: snapshot.generated_skills,
+      next_expected_action: nextExpectedAction,
+    });
+  }
+
+  registerTask(input: RegisterTaskInput) {
+    const registration = RegisterTaskInputSchema.parse(input);
+    const row = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(registration.task_id);
+    if (!row) throw new DomainError(`Task '${registration.task_id}' was not found`, 'task_not_found', 404);
+    const task = TaskSchema.parse(row);
+    const canonicalMarkdown = registration.task_markdown.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+    const actualHash = createHash('sha256').update(canonicalMarkdown, 'utf8').digest('hex');
+
+    if (actualHash !== registration.task_hash) {
+      throw new DomainError('task_hash does not match task_markdown', 'task_hash_mismatch', 400);
+    }
+
+    const result = RegisterTaskDataSchema.parse({
+      task_id: task.id,
+      state: 'awaiting_task_confirmation' as const,
+      task_path: registration.task_path,
+      task_hash: registration.task_hash,
+      next_action: 'ask_task_review',
+    });
+    if (
+      task.state === 'awaiting_task_confirmation' &&
+      task.task_path === registration.task_path &&
+      task.task_hash === registration.task_hash &&
+      task.task_markdown === canonicalMarkdown
+    ) {
+      return result;
+    }
+    if (task.state !== 'aligning') {
+      throw new DomainError(`Task cannot be registered while it is '${task.state}'`, 'invalid_task_state', 409);
+    }
+
+    const timestamp = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE tasks
+           SET state = ?, task_path = ?, task_markdown = ?, task_hash = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(result.state, registration.task_path, canonicalMarkdown, registration.task_hash, timestamp, task.id);
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(
+          task.workbook_id,
+          'task.registered',
+          JSON.stringify({
+            task_id: task.id,
+            state: result.state,
+            task_hash: registration.task_hash,
+          }),
+          timestamp,
+        );
+    })();
+
+    return result;
   }
 
   getSnapshot(workbookId: string) {
