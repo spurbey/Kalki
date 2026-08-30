@@ -110,6 +110,23 @@ export const WorkbookSchema = z
   })
   .strict();
 
+export const TrueForgeTurnStatusSchema = z.enum(['running', 'done', 'cancelled', 'error']);
+export type TrueForgeTurnStatus = z.infer<typeof TrueForgeTurnStatusSchema>;
+
+export const TrueForgeTurnSchema = z
+  .object({
+    id: IdSchema,
+    workbook_id: IdSchema,
+    previous_turn_id: IdSchema.nullable(),
+    status: TrueForgeTurnStatusSchema,
+    last_sequence_number: z.number().int().nonnegative(),
+    required_actions: z.array(JsonValueSchema),
+    started_at: TimestampSchema,
+    finished_at: TimestampSchema.nullable(),
+    updated_at: TimestampSchema,
+  })
+  .strict();
+
 export const TaskSchema = z
   .object({
     id: IdSchema,
@@ -388,6 +405,7 @@ export const WorkbookSnapshotSchema = z
 
 export type PortableError = z.infer<typeof PortableErrorSchema>;
 export type Workbook = z.infer<typeof WorkbookSchema>;
+export type TrueForgeTurn = z.infer<typeof TrueForgeTurnSchema>;
 export type Task = z.infer<typeof TaskSchema>;
 export type KalkiTable = z.infer<typeof TableSchema>;
 export type Run = z.infer<typeof RunSchema>;

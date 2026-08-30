@@ -2,6 +2,9 @@ import {
   type CreateTaskInput,
   type CreateWorkbookInput,
   TaskSchema,
+  type TrueForgeTurn,
+  TrueForgeTurnSchema,
+  type TrueForgeTurnStatus,
   WorkbookSchema,
   WorkbookSnapshotSchema,
 } from '@kalki/contracts';
@@ -92,14 +95,110 @@ export class WorkbookService {
     return task;
   }
 
-  getSnapshot(workbookId: string) {
-    const workbookRow = this.database.prepare('SELECT * FROM workbooks WHERE id = ?').get(workbookId);
-    if (!workbookRow) throw new DomainError(`Workbook '${workbookId}' was not found`, 'not_found', 404);
+  getWorkbook(workbookId: string) {
+    const row = this.database.prepare('SELECT * FROM workbooks WHERE id = ?').get(workbookId);
+    if (!row) throw new DomainError(`Workbook '${workbookId}' was not found`, 'not_found', 404);
+    return WorkbookSchema.parse(row);
+  }
 
-    const taskRows = this.database.prepare('SELECT * FROM tasks WHERE workbook_id = ? ORDER BY created_at').all(workbookId);
+  connectTrueForgeSession(workbookId: string, sessionId: string) {
+    const workbook = this.getWorkbook(workbookId);
+    if (workbook.trueforge_session_id === sessionId) return workbook;
+    if (workbook.trueforge_session_id) {
+      throw new DomainError('Workbook is already connected to TrueForge', 'workbook_already_connected', 409);
+    }
+    const sessionOwner = this.database
+      .prepare('SELECT id FROM workbooks WHERE trueforge_session_id = ?')
+      .get(sessionId) as { id: string } | undefined;
+    if (sessionOwner) {
+      throw new DomainError('TrueForge session is already connected to another workbook', 'session_already_connected', 409);
+    }
+
+    const timestamp = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database
+        .prepare('UPDATE workbooks SET trueforge_session_id = ?, updated_at = ? WHERE id = ?')
+        .run(sessionId, timestamp, workbookId);
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(workbookId, 'workbook.connected', JSON.stringify({ session_id: sessionId }), timestamp);
+    })();
+
+    return this.getWorkbook(workbookId);
+  }
+
+  getCurrentTrueForgeTurn(workbookId: string): TrueForgeTurn | null {
+    const workbook = this.getWorkbook(workbookId);
+    if (!workbook.current_trueforge_turn_id) return null;
+    const row = this.database
+      .prepare('SELECT * FROM trueforge_turns WHERE id = ?')
+      .get(workbook.current_trueforge_turn_id);
+    return row ? this.parseTrueForgeTurn(row) : null;
+  }
+
+  saveTrueForgeTurn(
+    workbookId: string,
+    input: {
+      id: string;
+      sessionId: string;
+      previousTurnId: string | null;
+      status: TrueForgeTurnStatus;
+      requiredActions: unknown[];
+      createdAt: string;
+      finishedAt: string | null;
+    },
+  ) {
+    const workbook = this.getWorkbook(workbookId);
+    if (workbook.trueforge_session_id !== input.sessionId) {
+      throw new DomainError('TrueForge turn does not belong to this workbook session', 'turn_session_mismatch', 409);
+    }
+    const turnOwner = this.database.prepare('SELECT workbook_id FROM trueforge_turns WHERE id = ?').get(input.id) as
+      | { workbook_id: string }
+      | undefined;
+    if (turnOwner && turnOwner.workbook_id !== workbookId) {
+      throw new DomainError('TrueForge turn is already stored for another workbook', 'turn_already_connected', 409);
+    }
+
+    const timestamp = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO trueforge_turns(
+             id, workbook_id, previous_turn_id, status, last_sequence_number, required_actions_json,
+             started_at, finished_at, updated_at
+           ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             status = excluded.status,
+             required_actions_json = excluded.required_actions_json,
+             finished_at = excluded.finished_at,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          input.id,
+          workbookId,
+          input.previousTurnId,
+          input.status,
+          JSON.stringify(input.requiredActions),
+          input.createdAt,
+          input.finishedAt,
+          timestamp,
+        );
+      this.database
+        .prepare('UPDATE workbooks SET current_trueforge_turn_id = ?, updated_at = ? WHERE id = ?')
+        .run(input.id, timestamp, workbookId);
+    })();
+
+    const row = this.database.prepare('SELECT * FROM trueforge_turns WHERE id = ?').get(input.id);
+    return this.parseTrueForgeTurn(row);
+  }
+
+  getSnapshot(workbookId: string) {
+    const taskRows = this.database
+      .prepare('SELECT * FROM tasks WHERE workbook_id = ? ORDER BY created_at')
+      .all(workbookId);
 
     return WorkbookSnapshotSchema.parse({
-      workbook: WorkbookSchema.parse(workbookRow),
+      workbook: this.getWorkbook(workbookId),
       tasks: taskRows.map(row => TaskSchema.parse(row)),
       tables: [],
       runs: [],
@@ -107,6 +206,22 @@ export class WorkbookService {
       artifacts: [],
       generated_skills: [],
       table_counts: {},
+    });
+  }
+
+  private parseTrueForgeTurn(row: unknown) {
+    if (!row || typeof row !== 'object') throw new Error('TrueForge turn was not persisted');
+    const stored = row as Record<string, unknown>;
+    return TrueForgeTurnSchema.parse({
+      id: stored.id,
+      workbook_id: stored.workbook_id,
+      previous_turn_id: stored.previous_turn_id,
+      status: stored.status,
+      last_sequence_number: stored.last_sequence_number,
+      required_actions: JSON.parse(String(stored.required_actions_json)) as unknown,
+      started_at: stored.started_at,
+      finished_at: stored.finished_at,
+      updated_at: stored.updated_at,
     });
   }
 }
