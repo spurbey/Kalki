@@ -1,4 +1,5 @@
 import {
+  ApprovalEventSchema,
   AnswerQuestionInputSchema,
   AgentQuestionSchema,
   canTransitionTask,
@@ -382,8 +383,27 @@ export class WorkbookService {
       throw new DomainError('Question is not being submitted', 'question_not_submitting', 409);
     }
 
-    const { task, nextState } = this.resolveQuestionTransition(question, input);
+    const { task, run, nextState } = this.resolveQuestionTransition(question, input);
     const timestamp = new Date().toISOString();
+    const approval =
+      question.gate_kind === 'production_review' && input.decision === 'approve' && task && run
+        ? ApprovalEventSchema.parse({
+            id: `approval_${randomUUID()}`,
+            workbook_id: workbookId,
+            task_id: task.id,
+            run_id: run.id,
+            agent_question_id: question.id,
+            question_event_id: question.question_event_id,
+            tool_call_id: question.tool_call_id,
+            question_turn_id: question.question_turn_id,
+            answer_turn_id: answerTurnId,
+            answer_text: input.answer,
+            approved_task_hash: run.task_hash,
+            approved_schema_hash: run.schema_hash,
+            approved_pipeline_hash: run.pipeline_hash,
+            created_at: timestamp,
+          })
+        : null;
     this.database.transaction(() => {
       this.database
         .prepare(
@@ -392,6 +412,57 @@ export class WorkbookService {
            WHERE id = ? AND status = 'submitting'`,
         )
         .run(input.answer, input.decision, answerTurnId, timestamp, question.id);
+      if (approval) {
+        this.database
+          .prepare(
+            `INSERT INTO approval_events(
+               id, workbook_id, task_id, run_id, agent_question_id, question_event_id,
+               tool_call_id, question_turn_id, answer_turn_id, answer_text,
+               approved_task_hash, approved_schema_hash, approved_pipeline_hash, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            approval.id,
+            approval.workbook_id,
+            approval.task_id,
+            approval.run_id,
+            approval.agent_question_id,
+            approval.question_event_id,
+            approval.tool_call_id,
+            approval.question_turn_id,
+            approval.answer_turn_id,
+            approval.answer_text,
+            approval.approved_task_hash,
+            approval.approved_schema_hash,
+            approval.approved_pipeline_hash,
+            approval.created_at,
+          );
+        this.database
+          .prepare(
+            `UPDATE runs
+             SET status = 'authorized', approved_at = ?, approval_event_id = ?,
+                 approved_task_hash = ?, approved_schema_hash = ?, approved_pipeline_hash = ?,
+                 updated_at = ?
+             WHERE id = ? AND status = 'awaiting_confirmation'`,
+          )
+          .run(
+            timestamp,
+            approval.id,
+            approval.approved_task_hash,
+            approval.approved_schema_hash,
+            approval.approved_pipeline_hash,
+            timestamp,
+            approval.run_id,
+          );
+      } else if (question.gate_kind === 'production_review' && run) {
+        this.database
+          .prepare(
+            `UPDATE runs
+             SET status = 'cancelled', finished_at = ?, updated_at = ?
+             WHERE id = ? AND status = 'awaiting_confirmation'`,
+          )
+          .run(timestamp, timestamp, run.id);
+      }
       if (task && nextState) {
         this.database
           .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
@@ -408,6 +479,8 @@ export class WorkbookService {
             gate_kind: question.gate_kind,
             decision: input.decision,
             answer_turn_id: answerTurnId,
+            run_id: run?.id ?? null,
+            approval_event_id: approval?.id ?? null,
             next_task_state: nextState,
           }),
           timestamp,
@@ -420,6 +493,9 @@ export class WorkbookService {
   private resolveQuestionTransition(question: AgentQuestion, input: AnswerQuestionInput) {
     const task = question.task_id
       ? TaskSchema.parse(this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(question.task_id))
+      : null;
+    const run = question.run_id
+      ? this.parseRun(this.database.prepare('SELECT * FROM runs WHERE id = ?').get(question.run_id))
       : null;
     let nextState: Task['state'] | null = null;
     if (question.gate_kind === 'task_review') {
@@ -434,6 +510,17 @@ export class WorkbookService {
       else if (input.decision === 'revise') nextState = 'exploring';
       else if (input.decision === 'cancel') nextState = 'cancelled';
       else throw new DomainError('Schema review requires approve, revise, or cancel', 'invalid_question_decision', 400);
+    } else if (question.gate_kind === 'production_review') {
+      if (!task || !run) {
+        throw new DomainError('Production review is missing its task or run', 'question_run_missing', 409);
+      }
+      if (run.task_id !== task.id || run.mode !== 'production' || run.status !== 'awaiting_confirmation') {
+        throw new DomainError('Production review does not match an awaiting run', 'question_run_mismatch', 409);
+      }
+      if (input.decision === 'approve') nextState = 'production_running';
+      else if (input.decision === 'revise') nextState = 'building';
+      else if (input.decision === 'cancel') nextState = 'cancelled';
+      else throw new DomainError('Production review requires approve, revise, or cancel', 'invalid_question_decision', 400);
     } else if (question.gate_kind === 'clarification') {
       if (input.decision !== 'free_text') {
         throw new DomainError('Clarification requires a free-text decision', 'invalid_question_decision', 400);
@@ -445,7 +532,7 @@ export class WorkbookService {
     if (task && nextState && !canTransitionTask(task.state, nextState)) {
       throw new DomainError(`Task cannot move from '${task.state}' to '${nextState}'`, 'invalid_task_state', 409);
     }
-    return { task, nextState };
+    return { task, run, nextState };
   }
 
   getWorkbookContext(input: GetWorkbookContextInput) {

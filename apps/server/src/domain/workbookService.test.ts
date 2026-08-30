@@ -382,6 +382,60 @@ describe('workbook persistence', () => {
       firstService.completeRun(completion);
       firstService.completeRun(completion);
 
+      const productionRun = {
+        ...run,
+        run_id: 'run_tesla_production',
+        mode: 'production' as const,
+      };
+      firstService.startRun(productionRun);
+      firstService.connectTrueForgeSession(workbook.id, 'session-production');
+      const questionTime = new Date().toISOString();
+      firstService.saveTrueForgeTurn(workbook.id, {
+        id: 'turn-production-question',
+        sessionId: 'session-production',
+        previousTurnId: null,
+        status: 'done',
+        requiredActions: [],
+        createdAt: questionTime,
+        finishedAt: questionTime,
+      });
+      firstService.savePendingQuestion(workbook.id, {
+        taskId: task.id,
+        runId: productionRun.run_id,
+        gateKind: 'production_review',
+        questionTurnId: 'turn-production-question',
+        questionEventId: 'event-production-review',
+        toolCallId: 'tool-production-review',
+        threadId: 'main',
+        questionText: 'Publish the complete Tesla dataset?',
+        options: ['Approve', 'Revise', 'Cancel'],
+      });
+      const productionAnswer = {
+        question_event_id: 'event-production-review',
+        question_turn_id: 'turn-production-question',
+        thread_id: 'main',
+        answer: 'Approve production',
+        decision: 'approve' as const,
+        gate_kind: 'production_review' as const,
+        related_run_id: productionRun.run_id,
+      };
+      firstService.markQuestionSubmitting(workbook.id, 'tool-production-review', productionAnswer);
+      firstService.saveTrueForgeTurn(workbook.id, {
+        id: 'turn-production-answer',
+        sessionId: 'session-production',
+        previousTurnId: 'turn-production-question',
+        status: 'done',
+        requiredActions: [],
+        createdAt: questionTime,
+        finishedAt: questionTime,
+      });
+      firstService.completeQuestion(
+        workbook.id,
+        'tool-production-review',
+        productionAnswer,
+        'turn-production-answer',
+      );
+
       const otherTask = firstService.createTask(workbook.id, {
         slug: 'other-task',
         title: 'Other task',
@@ -408,17 +462,21 @@ describe('workbook persistence', () => {
         workbook_id: workbook.id,
         task_id: task.id,
       });
-      reopenedDatabase.close();
 
-      expect(snapshot.tasks[0]?.state).toBe('awaiting_production_confirmation');
+      expect(snapshot.tasks[0]?.state).toBe('production_running');
       expect(snapshot.tables).toHaveLength(4);
       expect(context.tables.map((table) => table.slug)).toEqual(['tesla-history', 'tesla-top-3']);
-      expect(snapshot.runs).toHaveLength(2);
-      expect(context.runs).toHaveLength(1);
-      expect(context.runs[0]?.status).toBe('completed');
+      expect(snapshot.runs).toHaveLength(3);
+      expect(context.runs).toHaveLength(2);
+      expect(context.runs.find((candidate) => candidate.mode === 'test')?.status).toBe('completed');
+      expect(context.runs.find((candidate) => candidate.mode === 'production')?.status).toBe('authorized');
       expect(snapshot.runs[0]?.test_samples?.['tesla-history']).toHaveLength(5);
-      expect(context.runs[0]?.counts.formal_rows).toBe(0);
+      expect(context.runs.every((candidate) => candidate.counts.formal_rows === 0)).toBe(true);
       expect(context.aggregate_schema_hash).toBe(schemaHash);
+      expect(
+        reopenedDatabase.prepare('SELECT count(*) AS count FROM approval_events').get(),
+      ).toEqual({ count: 1 });
+      reopenedDatabase.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
