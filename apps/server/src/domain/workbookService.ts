@@ -1,13 +1,22 @@
 import {
+  canonicalJson,
   type CreateTaskInput,
   type CreateWorkbookInput,
   type GetWorkbookContextInput,
   GetWorkbookContextDataSchema,
   GetWorkbookContextInputSchema,
   IdSchema,
+  type RegisterSchemaInput,
+  RegisterSchemaDataSchema,
+  RegisterSchemaInputSchema,
   type RegisterTaskInput,
   RegisterTaskDataSchema,
   RegisterTaskInputSchema,
+  RunSchema,
+  type StartRunInput,
+  StartRunDataSchema,
+  StartRunInputSchema,
+  TableSchema,
   TaskSchema,
   type TrueForgeTurn,
   type TrueForgeTurnInput,
@@ -19,6 +28,19 @@ import {
 import Database from 'better-sqlite3';
 import { createHash, randomUUID } from 'node:crypto';
 import { DomainError } from './errors.js';
+
+function hashJson(value: unknown): string {
+  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
+}
+
+function aggregateSchemaHash(tables: Array<{ schema_path: string; schema_hash: string }>): string | null {
+  if (tables.length === 0) return null;
+  return hashJson(
+    tables
+      .map((table) => ({ path: table.schema_path, sha256: table.schema_hash }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+  );
+}
 
 export class WorkbookService {
   constructor(private readonly database: Database.Database) {}
@@ -211,6 +233,13 @@ export class WorkbookService {
     if (!task) nextExpectedAction = 'create_task';
     else if (task.state === 'aligning') nextExpectedAction = 'author_task';
     else if (task.state === 'awaiting_task_confirmation') nextExpectedAction = 'ask_task_review';
+    else if (task.state === 'exploring') nextExpectedAction = 'register_schema';
+    else if (task.state === 'awaiting_schema_review') nextExpectedAction = 'ask_schema_review';
+    else if (task.state === 'building') nextExpectedAction = 'start_test_run';
+    else if (task.state === 'testing') nextExpectedAction = 'complete_test_run';
+
+    const taskTables = task ? snapshot.tables.filter(table => table.task_id === task.id) : [];
+    const taskRuns = task ? snapshot.runs.filter(run => run.task_id === task.id) : [];
 
     return GetWorkbookContextDataSchema.parse({
       workbook: {
@@ -227,14 +256,14 @@ export class WorkbookService {
             task_hash: task.task_hash,
           }
         : null,
-      tables: snapshot.tables.map((table) => ({
+      tables: taskTables.map((table) => ({
         id: table.id,
         slug: table.slug,
         kind: table.kind,
         schema_hash: table.schema_hash,
       })),
-      aggregate_schema_hash: null,
-      runs: snapshot.runs.map((run) => ({
+      aggregate_schema_hash: aggregateSchemaHash(taskTables),
+      runs: taskRuns.map((run) => ({
         id: run.id,
         mode: run.mode,
         status: run.status,
@@ -309,16 +338,265 @@ export class WorkbookService {
     return result;
   }
 
+  registerSchema(input: RegisterSchemaInput) {
+    const registration = RegisterSchemaInputSchema.parse(input);
+    const row = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(registration.task_id);
+    if (!row) throw new DomainError(`Task '${registration.task_id}' was not found`, 'task_not_found', 404);
+    const task = TaskSchema.parse(row);
+
+    const seenSlugs = new Set<string>();
+    const tables = registration.schemas.map((item, ordinal) => {
+      const table = item.schema.table;
+      if (item.path !== `schemas/${table.slug}.yaml`) {
+        throw new DomainError(`Schema '${item.path}' has invalid table metadata`, 'schema_validation_failed', 400);
+      }
+      if (seenSlugs.has(table.slug)) {
+        throw new DomainError(`Table slug '${table.slug}' is duplicated`, 'schema_set_invalid', 400);
+      }
+      seenSlugs.add(table.slug);
+
+      const actualHash = hashJson(item.schema);
+      if (actualHash !== item.schema_hash) {
+        throw new DomainError(`schema_hash does not match '${item.path}'`, 'schema_hash_mismatch', 400);
+      }
+
+      return TableSchema.parse({
+        id: `table_${randomUUID()}`,
+        task_id: task.id,
+        slug: table.slug,
+        name: table.name,
+        kind: table.kind,
+        ordinal,
+        schema_path: item.path,
+        schema: item.schema,
+        schema_hash: item.schema_hash,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    });
+
+    if (tables.filter((table) => table.kind === 'source').length !== 1) {
+      throw new DomainError('Schema set must contain exactly one source table', 'schema_set_invalid', 400);
+    }
+    const actualAggregateHash = aggregateSchemaHash(tables);
+    if (actualAggregateHash !== registration.aggregate_schema_hash) {
+      throw new DomainError('aggregate_schema_hash does not match schemas', 'aggregate_schema_hash_mismatch', 400);
+    }
+
+    const existing = this.database
+      .prepare('SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal')
+      .all(task.id)
+      .map((table) => this.parseTable(table));
+    const resultFor = (registeredTables: typeof tables) =>
+      RegisterSchemaDataSchema.parse({
+        task_id: task.id,
+        state: 'awaiting_schema_review',
+        tables: registeredTables.map(({ id, slug, kind, schema_hash }) => ({
+          id,
+          slug,
+          kind,
+          schema_hash,
+        })),
+        aggregate_schema_hash: registration.aggregate_schema_hash,
+        next_action: 'ask_schema_review',
+      });
+
+    if (
+      task.state === 'awaiting_schema_review' &&
+      existing.length === tables.length &&
+      existing.every(
+        (table, index) =>
+          table.schema_path === tables[index]?.schema_path && table.schema_hash === tables[index]?.schema_hash,
+      )
+    ) {
+      return resultFor(existing);
+    }
+    if (task.state !== 'exploring') {
+      throw new DomainError(`Schemas cannot be registered while task is '${task.state}'`, 'invalid_task_state', 409);
+    }
+
+    const timestamp = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database.prepare('DELETE FROM tables WHERE task_id = ?').run(task.id);
+      const insert = this.database.prepare(
+        `INSERT INTO tables(
+           id, task_id, slug, name, kind, ordinal, schema_path, schema_json, schema_hash, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const table of tables) {
+        insert.run(
+          table.id,
+          table.task_id,
+          table.slug,
+          table.name,
+          table.kind,
+          table.ordinal,
+          table.schema_path,
+          canonicalJson(table.schema),
+          table.schema_hash,
+          timestamp,
+          timestamp,
+        );
+      }
+      this.database
+        .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
+        .run('awaiting_schema_review', timestamp, task.id);
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(
+          task.workbook_id,
+          'schema.registered',
+          JSON.stringify({
+            task_id: task.id,
+            aggregate_schema_hash: registration.aggregate_schema_hash,
+          }),
+          timestamp,
+        );
+    })();
+
+    return resultFor(tables);
+  }
+
+  startRun(input: StartRunInput) {
+    const requested = StartRunInputSchema.parse(input);
+    const existingRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
+    if (existingRow) {
+      const existing = this.parseRun(existingRow);
+      if (
+        existing.task_id !== requested.task_id ||
+        existing.mode !== requested.mode ||
+        existing.task_hash !== requested.task_hash ||
+        existing.schema_hash !== requested.schema_hash ||
+        existing.pipeline_hash !== requested.pipeline_hash
+      ) {
+        throw new DomainError(`Run '${requested.run_id}' already has different inputs`, 'run_identity_conflict', 409);
+      }
+      return this.runResult(existing);
+    }
+
+    const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(requested.task_id);
+    if (!taskRow) throw new DomainError(`Task '${requested.task_id}' was not found`, 'task_not_found', 404);
+    const task = TaskSchema.parse(taskRow);
+    const tables = this.database
+      .prepare('SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal')
+      .all(task.id)
+      .map((table) => this.parseTable(table));
+    if (task.task_hash !== requested.task_hash || aggregateSchemaHash(tables) !== requested.schema_hash) {
+      throw new DomainError('Run hashes do not match the current task and schemas', 'hashes_not_current', 409);
+    }
+
+    if (requested.mode === 'test' && task.state !== 'building') {
+      throw new DomainError(`Test run cannot start while task is '${task.state}'`, 'invalid_task_state', 409);
+    }
+    if (requested.mode === 'production') {
+      if (task.state !== 'awaiting_production_confirmation') {
+        throw new DomainError(`Production run cannot start while task is '${task.state}'`, 'invalid_task_state', 409);
+      }
+      const completedTest = this.database
+        .prepare(
+          `SELECT 1 FROM runs
+           WHERE task_id = ? AND mode = 'test' AND status = 'completed'
+             AND task_hash = ? AND schema_hash = ? AND pipeline_hash = ?`,
+        )
+        .get(task.id, requested.task_hash, requested.schema_hash, requested.pipeline_hash);
+      if (!completedTest) throw new DomainError('A matching successful test is required', 'test_required', 409);
+    }
+
+    const timestamp = new Date().toISOString();
+    const run = RunSchema.parse({
+      id: requested.run_id,
+      task_id: task.id,
+      mode: requested.mode,
+      status: requested.mode === 'test' ? 'running' : 'awaiting_confirmation',
+      task_hash: requested.task_hash,
+      schema_hash: requested.schema_hash,
+      pipeline_hash: requested.pipeline_hash,
+      approved_at: null,
+      approval_event_id: null,
+      approved_task_hash: null,
+      approved_schema_hash: null,
+      approved_pipeline_hash: null,
+      test_manifest: null,
+      test_samples: null,
+      published_row_count: 0,
+      total_record_count: null,
+      error: null,
+      created_at: timestamp,
+      started_at: requested.mode === 'test' ? timestamp : null,
+      finished_at: null,
+      updated_at: timestamp,
+    });
+
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO runs(
+             id, task_id, mode, status, task_hash, schema_hash, pipeline_hash,
+             approved_at, approval_event_id, approved_task_hash, approved_schema_hash, approved_pipeline_hash,
+             test_manifest_json, test_samples_json, published_row_count, total_record_count, error_json,
+             created_at, started_at, finished_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          run.id,
+          run.task_id,
+          run.mode,
+          run.status,
+          run.task_hash,
+          run.schema_hash,
+          run.pipeline_hash,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          0,
+          null,
+          null,
+          run.created_at,
+          run.started_at,
+          null,
+          run.updated_at,
+        );
+      if (run.mode === 'test') {
+        this.database
+          .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
+          .run('testing', timestamp, task.id);
+      }
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(task.workbook_id, 'run.started', JSON.stringify({ run_id: run.id, mode: run.mode }), timestamp);
+    })();
+
+    return this.runResult(run);
+  }
+
   getSnapshot(workbookId: string) {
     const taskRows = this.database
       .prepare('SELECT * FROM tasks WHERE workbook_id = ? ORDER BY created_at')
+      .all(workbookId);
+    const tableRows = this.database
+      .prepare(
+        `SELECT tables.* FROM tables
+         JOIN tasks ON tasks.id = tables.task_id
+         WHERE tasks.workbook_id = ? ORDER BY tables.ordinal`,
+      )
+      .all(workbookId);
+    const runRows = this.database
+      .prepare(
+        `SELECT runs.* FROM runs
+         JOIN tasks ON tasks.id = runs.task_id
+         WHERE tasks.workbook_id = ? ORDER BY runs.created_at`,
+      )
       .all(workbookId);
 
     return WorkbookSnapshotSchema.parse({
       workbook: this.getWorkbook(workbookId),
       tasks: taskRows.map(row => TaskSchema.parse(row)),
-      tables: [],
-      runs: [],
+      tables: tableRows.map((row) => this.parseTable(row)),
+      runs: runRows.map((row) => this.parseRun(row)),
       pending_question: null,
       artifacts: [],
       generated_skills: [],
@@ -339,6 +617,45 @@ export class WorkbookService {
       started_at: stored.started_at,
       finished_at: stored.finished_at,
       updated_at: stored.updated_at,
+    });
+  }
+
+  private parseTable(row: unknown) {
+    if (!row || typeof row !== 'object') throw new Error('Table was not persisted');
+    const { schema_json: schemaJson, ...stored } = row as Record<string, unknown>;
+    return TableSchema.parse({
+      ...stored,
+      schema: JSON.parse(String(schemaJson)) as unknown,
+    });
+  }
+
+  private parseRun(row: unknown) {
+    if (!row || typeof row !== 'object') throw new Error('Run was not persisted');
+    const {
+      test_manifest_json: testManifestJson,
+      test_samples_json: testSamplesJson,
+      error_json: errorJson,
+      ...stored
+    } = row as Record<string, unknown>;
+    return RunSchema.parse({
+      ...stored,
+      test_manifest: testManifestJson ? JSON.parse(String(testManifestJson)) : null,
+      test_samples: testSamplesJson ? JSON.parse(String(testSamplesJson)) : null,
+      error: errorJson ? JSON.parse(String(errorJson)) : null,
+    });
+  }
+
+  private runResult(run: ReturnType<WorkbookService['parseRun']>) {
+    return StartRunDataSchema.parse({
+      run_id: run.id,
+      mode: run.mode,
+      status: run.status,
+      hashes: {
+        task: run.task_hash,
+        schema: run.schema_hash,
+        pipeline: run.pipeline_hash,
+      },
+      next_action: run.mode === 'test' ? 'execute_test' : 'ask_production_review',
     });
   }
 }

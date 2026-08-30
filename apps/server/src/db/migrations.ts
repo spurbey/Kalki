@@ -57,4 +57,51 @@ export const migrations = [
         ON trueforge_turns(workbook_id, started_at);
     `,
   },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE tables (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id),
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('source', 'derived')),
+        ordinal INTEGER NOT NULL,
+        schema_path TEXT NOT NULL,
+        schema_json TEXT NOT NULL,
+        schema_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(task_id, slug),
+        UNIQUE(task_id, ordinal)
+      );
+
+      CREATE TABLE runs (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id),
+        mode TEXT NOT NULL CHECK (mode IN ('test', 'production')),
+        status TEXT NOT NULL,
+        task_hash TEXT NOT NULL,
+        schema_hash TEXT NOT NULL,
+        pipeline_hash TEXT NOT NULL,
+        approved_at TEXT,
+        approval_event_id TEXT,
+        approved_task_hash TEXT,
+        approved_schema_hash TEXT,
+        approved_pipeline_hash TEXT,
+        test_manifest_json TEXT,
+        test_samples_json TEXT,
+        published_row_count INTEGER NOT NULL DEFAULT 0,
+        total_record_count INTEGER,
+        error_json TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_tables_task_ordinal ON tables(task_id, ordinal);
+      CREATE INDEX idx_runs_task_created ON runs(task_id, created_at);
+    `,
+  },
 ] as const;
