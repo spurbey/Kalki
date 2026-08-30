@@ -305,7 +305,7 @@ describe('workbook persistence', () => {
         dedupe_key: `2025-01-0${index + 2}`,
         provenance: directProvenance,
       }));
-      const derivedSamples = Array.from({ length: 3 }, (_, index) => ({
+      const derivedSamples = Array.from({ length: 5 }, (_, index) => ({
         data: { rank: index + 1 },
         dedupe_key: String(index + 1),
         provenance: {
@@ -330,7 +330,11 @@ describe('workbook persistence', () => {
           task_hash: run.task_hash,
           schema_hash: run.schema_hash,
           pipeline_hash: run.pipeline_hash,
-          counts: { source_records: 5, derived_records: 3 },
+          counts: { source_records: 5, derived_records: 7 },
+          tables: {
+            'tesla-history': { count: 5 },
+            'tesla-top-3': { count: 7 },
+          },
           done: true,
           error: null,
         },

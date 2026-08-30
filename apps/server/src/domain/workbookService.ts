@@ -13,6 +13,7 @@ import {
   GetWorkbookContextDataSchema,
   GetWorkbookContextInputSchema,
   IdSchema,
+  MAX_TEST_SAMPLE_RECORDS_PER_TABLE,
   type RegisterSchemaInput,
   RegisterSchemaDataSchema,
   RegisterSchemaInputSchema,
@@ -860,6 +861,7 @@ export class WorkbookService {
     let nextTaskState: 'awaiting_production_confirmation' | 'building' | 'cancelled';
     if (requested.outcome === 'completed') {
       const manifestCounts = requested.manifest.counts;
+      const manifestTables = requested.manifest.tables;
       if (
         requested.error !== null ||
         requested.manifest.ok !== true ||
@@ -874,7 +876,10 @@ export class WorkbookService {
         requested.manifest.error !== null ||
         !manifestCounts ||
         typeof manifestCounts !== 'object' ||
-        Array.isArray(manifestCounts)
+        Array.isArray(manifestCounts) ||
+        !manifestTables ||
+        typeof manifestTables !== 'object' ||
+        Array.isArray(manifestTables)
       ) {
         throw new DomainError('Test manifest is incomplete or stale', 'run_completion_incomplete', 409);
       }
@@ -882,13 +887,26 @@ export class WorkbookService {
       const samples = requested.samples;
       const sampleSlugs = Object.keys(samples).sort();
       const tableSlugs = tables.map((table) => table.slug).sort();
-      const sourceRecords = tables
-        .filter((table) => table.kind === 'source')
-        .reduce((count, table) => count + (samples[table.slug]?.length ?? 0), 0);
-      const derivedRecords = tables
-        .filter((table) => table.kind === 'derived')
-        .reduce((count, table) => count + (samples[table.slug]?.length ?? 0), 0);
       const counts = manifestCounts as Record<string, unknown>;
+      const tableManifests = manifestTables as Record<string, unknown>;
+      let sourceRecords = 0;
+      let derivedRecords = 0;
+
+      for (const table of tables) {
+        const tableManifest = tableManifests[table.slug];
+        if (!tableManifest || typeof tableManifest !== 'object' || Array.isArray(tableManifest)) {
+          throw new DomainError('Test table manifest is incomplete', 'run_completion_incomplete', 409);
+        }
+        const recordCount = (tableManifest as Record<string, unknown>).count;
+        if (!Number.isInteger(recordCount) || Number(recordCount) < 0) {
+          throw new DomainError('Test table count is invalid', 'run_completion_incomplete', 409);
+        }
+        if ((samples[table.slug]?.length ?? 0) !== Math.min(Number(recordCount), MAX_TEST_SAMPLE_RECORDS_PER_TABLE)) {
+          throw new DomainError('Test samples do not match table counts', 'run_completion_incomplete', 409);
+        }
+        if (table.kind === 'source') sourceRecords += Number(recordCount);
+        else derivedRecords += Number(recordCount);
+      }
 
       if (
         canonicalJson(sampleSlugs) !== canonicalJson(tableSlugs) ||

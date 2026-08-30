@@ -5,6 +5,7 @@ import re
 import sys
 from datetime import date, datetime, timezone
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 from kalki_runtime.contracts import RecordEnvelope, RunContext
@@ -12,6 +13,13 @@ from kalki_runtime.provenance import Provenance
 
 _MCP_CLIENT_DIR = "/opt/tf/mcp-client"
 _REQUEST_LINE = re.compile(r"^(\d+)\.\s+\[GET\]\s+(\S+)\s+=>\s+\[(\d+)\]", re.MULTILINE)
+_FIXED_QUERY = {
+    "interval": "1d",
+    "includePrePost": "false",
+    "events": "div|split",
+    "lang": "en-US",
+    "region": "US",
+}
 
 
 def _text(value: Any) -> str:
@@ -71,8 +79,27 @@ class YahooTeslaHistorySource:
         payload, final_url, retrieved_at, response_hash = asyncio.run(
             _captured_chart(str(context.config["capture_url_pattern"]))
         )
-        if not final_url.startswith(endpoint):
+        approved_url = urlsplit(endpoint)
+        captured_url = urlsplit(final_url)
+        if (
+            captured_url.scheme != "https"
+            or captured_url.hostname != approved_url.hostname
+            or captured_url.port not in (None, 443)
+            or captured_url.path != approved_url.path
+        ):
             raise ValueError(f"captured an unexpected Yahoo endpoint: {final_url}")
+        query = parse_qs(captured_url.query, keep_blank_values=True)
+        if set(query) != {*_FIXED_QUERY, "period1", "period2"}:
+            raise ValueError(f"captured unreviewed Yahoo query parameters: {final_url}")
+        if any(query.get(name) != [value] for name, value in _FIXED_QUERY.items()):
+            raise ValueError(f"captured unreviewed Yahoo query values: {final_url}")
+        try:
+            period1 = int(query["period1"][0])
+            period2 = int(query["period2"][0])
+        except (KeyError, ValueError, IndexError) as error:
+            raise ValueError(f"captured invalid Yahoo date range: {final_url}") from error
+        if len(query["period1"]) != 1 or len(query["period2"]) != 1 or period1 >= period2:
+            raise ValueError(f"captured invalid Yahoo date range: {final_url}")
 
         chart = payload.get("chart")
         results = chart.get("result") if isinstance(chart, dict) and chart.get("error") is None else None
@@ -106,7 +133,8 @@ class YahooTeslaHistorySource:
             raise ValueError("Yahoo adjusted-close array does not align with timestamps")
 
         exchange_timezone = ZoneInfo(meta["exchangeTimezoneName"])
-        last_completed = self._last_completed_session(meta, exchange_timezone)
+        incomplete_session = self._incomplete_session_date(meta, exchange_timezone)
+        today = datetime.now(exchange_timezone).date()
         price_decimals = int(meta.get("priceHint", 2))
         currency = str(meta["currency"])
 
@@ -114,7 +142,7 @@ class YahooTeslaHistorySource:
             if not isinstance(timestamp, int):
                 raise ValueError("Yahoo timestamp is invalid")
             trading_date = datetime.fromtimestamp(timestamp, exchange_timezone).date()
-            if trading_date < start or trading_date > last_completed:
+            if trading_date < start or trading_date > today or trading_date == incomplete_session:
                 continue
 
             open_value, high, low, close, volume = (values[index] for values in arrays)
@@ -158,10 +186,9 @@ class YahooTeslaHistorySource:
             )
 
     @staticmethod
-    def _last_completed_session(meta: dict[str, Any], exchange_timezone: ZoneInfo) -> date:
+    def _incomplete_session_date(meta: dict[str, Any], exchange_timezone: ZoneInfo) -> date | None:
         market_time = int(meta["regularMarketTime"])
         market_date = datetime.fromtimestamp(market_time, exchange_timezone).date()
         regular_close = int(meta["currentTradingPeriod"]["regular"]["end"])
-        if market_time >= regular_close or datetime.now(exchange_timezone).date() > market_date:
-            return market_date
-        raise ValueError(f"latest Yahoo session has not completed: {market_date}")
+        now = datetime.now(exchange_timezone)
+        return market_date if now.date() == market_date and now.timestamp() < regular_close else None
