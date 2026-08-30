@@ -289,11 +289,12 @@ export const AnswerQuestionInputSchema = z
   .superRefine((value, context) => {
     if (
       value.gate_kind === 'production_review' &&
+      value.decision === 'approve' &&
       value.related_run_id === undefined
     ) {
       context.addIssue({
         code: 'custom',
-        message: 'production review answers require related_run_id',
+        message: 'production approval requires related_run_id',
         path: ['related_run_id'],
       });
     }

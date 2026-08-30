@@ -109,7 +109,10 @@ async function persistPendingQuestion(
     snapshot.runs.find(
       (candidate) => candidate.status === "awaiting_confirmation",
     ) ?? null;
-  const gateKind = gateKindForTaskState(task?.state ?? "aligning");
+  const gateKind =
+    task?.state === "awaiting_production_confirmation" && !run
+      ? "clarification"
+      : gateKindForTaskState(task?.state ?? "aligning");
   const options =
     gateKind === "task_review"
       ? ["Approve task", "Request changes", "Cancel task"]

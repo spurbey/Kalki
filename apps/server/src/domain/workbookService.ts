@@ -822,36 +822,46 @@ export class WorkbookService {
           400,
         );
     } else if (question.gate_kind === "production_review") {
-      if (!task || !run) {
+      if (!task) {
         throw new DomainError(
-          "Production review is missing its task or run",
-          "question_run_missing",
+          "Production review is missing its task",
+          "question_task_missing",
           409,
         );
       }
-      const allowedStatus =
-        run.status === "awaiting_confirmation" ||
-        (input.decision === "approve" && run.status === "authorized");
-      if (
-        run.task_id !== task.id ||
-        run.mode !== "production" ||
-        !allowedStatus
-      ) {
-        throw new DomainError(
-          "Production review does not match an awaiting run",
-          "question_run_mismatch",
-          409,
-        );
-      }
-      if (input.decision === "approve") nextState = "production_running";
-      else if (input.decision === "revise") nextState = "building";
-      else if (input.decision === "cancel") nextState = "cancelled";
-      else
+      if (!["approve", "revise", "cancel"].includes(input.decision)) {
         throw new DomainError(
           "Production review requires approve, revise, or cancel",
           "invalid_question_decision",
           400,
         );
+      }
+      if (input.decision === "approve" && !run) {
+        throw new DomainError(
+          "Production approval is missing its run",
+          "question_run_missing",
+          409,
+        );
+      }
+      if (run) {
+        const allowedStatus =
+          run.status === "awaiting_confirmation" ||
+          (input.decision === "approve" && run.status === "authorized");
+        if (
+          run.task_id !== task.id ||
+          run.mode !== "production" ||
+          !allowedStatus
+        ) {
+          throw new DomainError(
+            "Production review does not match an awaiting run",
+            "question_run_mismatch",
+            409,
+          );
+        }
+      }
+      if (input.decision === "approve") nextState = "production_running";
+      else if (input.decision === "revise") nextState = run ? "building" : null;
+      else nextState = "cancelled";
     } else if (question.gate_kind === "clarification") {
       if (input.decision !== "free_text") {
         throw new DomainError(
