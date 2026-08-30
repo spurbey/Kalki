@@ -115,7 +115,7 @@ function compactAgentEvent(event: TrueForgeStreamEvent): JsonObject {
   const payload = compact(event) as JsonObject;
   if (Buffer.byteLength(JSON.stringify(payload), 'utf8') <= 16_384) return payload;
 
-  const fallback: JsonObject = { type: event.type, payload_truncated: true };
+  const fallback: JsonObject = { type: event.type.slice(0, 94), payload_truncated: true };
   for (const key of ['id', 'thread_id', 'created_at', 'content']) {
     if (typeof event[key] === 'string') fallback[key] = event[key].slice(0, 4000);
   }

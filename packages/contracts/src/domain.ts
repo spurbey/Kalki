@@ -12,6 +12,12 @@ export type JsonObject = { [key: string]: JsonValue };
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
 export type TrueForgeStreamEvent = JsonObject & { type: string };
 
+const TrueForgeStreamEventTypeSchema = z
+  .string()
+  .min(1)
+  .max(94)
+  .regex(/^[^\u0000-\u001F\u007F]*$/, 'event type cannot contain control characters');
+
 export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([z.null(), z.boolean(), z.number().finite(), z.string(), z.array(JsonValueSchema), JsonObjectSchema]),
 );
@@ -24,7 +30,8 @@ export const JsonObjectSchema: z.ZodType<JsonObject> = z.lazy(() =>
 );
 
 export const TrueForgeStreamEventSchema: z.ZodType<TrueForgeStreamEvent> = JsonObjectSchema.refine(
-  (event): event is TrueForgeStreamEvent => typeof event.type === 'string' && event.type.length > 0,
+  (event): event is TrueForgeStreamEvent =>
+    typeof event.type === 'string' && TrueForgeStreamEventTypeSchema.safeParse(event.type).success,
   'TrueForge stream event requires a type',
 );
 
