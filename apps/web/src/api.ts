@@ -9,6 +9,8 @@ import {
   WorkbookSnapshotResponseSchema,
   type AgentQuestion,
   type AnswerQuestionInput,
+  type CreateTurnInput,
+  type CreateWorkbookInput,
   type CreateTaskInput,
   type HealthResponse,
   type TableRowsResponse,
@@ -61,10 +63,12 @@ export async function getHealth(): Promise<HealthResponse> {
   return request("/healthz", HealthResponseSchema);
 }
 
-export async function createWorkbook(title: string): Promise<Workbook> {
+export async function createWorkbook(
+  input: CreateWorkbookInput,
+): Promise<Workbook> {
   const response = await request("/api/v1/workbooks", WorkbookResponseSchema, {
     method: "POST",
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(input),
   });
   return response.data;
 }
@@ -102,12 +106,12 @@ export async function connectWorkbook(workbookId: string): Promise<Workbook> {
 
 export async function createTurn(
   workbookId: string,
-  input: string,
+  input: CreateTurnInput,
 ): Promise<TrueForgeTurn> {
   const response = await request(
     `/api/v1/workbooks/${encodeURIComponent(workbookId)}/turns`,
     TrueForgeTurnResponseSchema,
-    { method: "POST", body: JSON.stringify({ input }) },
+    { method: "POST", body: JSON.stringify(input) },
   );
   return response.data;
 }
@@ -164,6 +168,7 @@ const streamedEventTypes = [
   "agent.thread.created",
   "agent.thread.done",
   "agent.turn.done",
+  "table.batch_published",
 ] as const;
 
 export type StreamStatus = "connecting" | "live" | "reconnecting";

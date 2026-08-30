@@ -5,6 +5,16 @@ import * as api from "../api.js";
 import { shortHash } from "../lib/format.js";
 import { StatusPill } from "../components/common.js";
 
+export function taskSlug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80) || "research-task"
+  );
+}
+
 export function TaskView({
   task,
   workbookId,
@@ -67,15 +77,9 @@ export function TaskView({
     if (!title.trim() || !objective.trim()) return;
     setBusy(true);
     setError("");
-    const slug =
-      title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "")
-        .slice(0, 80) || "research-task";
     try {
       await api.createTask(workbookId, {
-        slug,
+        slug: taskSlug(title),
         title: title.trim(),
         objective: objective.trim(),
       });

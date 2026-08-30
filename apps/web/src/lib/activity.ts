@@ -3,7 +3,7 @@ import { contentText, isObject, label } from "./format.js";
 
 export type ActivityItem = {
   key: string;
-  kind: "assistant" | "user" | "tool" | "status" | "error";
+  kind: "assistant" | "reasoning" | "user" | "tool" | "status" | "error";
   title: string;
   text: string;
   detail?: string | undefined;
@@ -15,26 +15,54 @@ function toolName(value: JsonValue): string {
   if (!isObject(value)) return "Tool call";
   if (isObject(value.toolInfo) && typeof value.toolInfo.name === "string")
     return value.toolInfo.name;
+  if (isObject(value.tool_info) && typeof value.tool_info.name === "string")
+    return value.tool_info.name;
   if (isObject(value.function) && typeof value.function.name === "string")
     return value.function.name;
   return "Tool call";
 }
 
-function toolDetail(value: JsonValue): string | undefined {
+function toolDetail(value: JsonValue): string {
   if (
     !isObject(value) ||
     !isObject(value.function) ||
     typeof value.function.arguments !== "string"
   ) {
-    return undefined;
+    return "";
   }
-  return value.function.arguments.slice(0, 1200);
+  return value.function.arguments;
+}
+
+function messageContent(value: JsonValue | undefined) {
+  if (typeof value === "string") return { text: value, reasoning: "" };
+  if (!Array.isArray(value)) return { text: "", reasoning: "" };
+
+  let text = "";
+  let reasoning = "";
+  for (const part of value) {
+    if (typeof part === "string") {
+      text += part;
+      continue;
+    }
+    if (!isObject(part)) continue;
+    const partText =
+      typeof part.text === "string"
+        ? part.text
+        : typeof part.content === "string"
+          ? part.content
+          : "";
+    if (part.type === "reasoning") reasoning += partText;
+    else text += partText;
+  }
+  return { text, reasoning };
 }
 
 export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
   const items: ActivityItem[] = [];
   const assistantById = new Map<string, ActivityItem>();
+  const reasoningById = new Map<string, ActivityItem>();
   const toolById = new Map<string, ActivityItem>();
+  const toolBySlot = new Map<string, ActivityItem>();
 
   for (const stored of [...events].sort(
     (left, right) => left.seq - right.seq,
@@ -51,7 +79,9 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
     const timestamp =
       typeof wrapped.createdAt === "string"
         ? wrapped.createdAt
-        : stored.created_at;
+        : typeof wrapped.created_at === "string"
+          ? wrapped.created_at
+          : stored.created_at;
 
     if (eventType === "user.message" || eventType === "user.tool_response") {
       items.push({
@@ -65,7 +95,30 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
     }
 
     if (eventType === "model.message" || eventType === "model.message.delta") {
-      const text = contentText(wrapped.content);
+      const content = messageContent(wrapped.content);
+      const reasoning =
+        content.reasoning ||
+        contentText(wrapped.reasoning) ||
+        contentText(wrapped.reasoning_content);
+      if (reasoning) {
+        let item = reasoningById.get(eventId);
+        if (!item) {
+          item = {
+            key: `reasoning-${eventId}`,
+            kind: "reasoning",
+            title: "Reasoning",
+            text: "",
+            timestamp,
+          };
+          reasoningById.set(eventId, item);
+          items.push(item);
+        }
+        item.text = eventType.endsWith(".delta")
+          ? `${item.text}${reasoning}`
+          : reasoning;
+      }
+
+      const text = content.text;
       let item = assistantById.get(eventId);
       if (!item && text) {
         item = {
@@ -81,25 +134,39 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
       if (item && text)
         item.text = eventType.endsWith(".delta") ? `${item.text}${text}` : text;
 
-      if (Array.isArray(wrapped.toolCalls)) {
-        for (const call of wrapped.toolCalls) {
+      const calls = Array.isArray(wrapped.toolCalls)
+        ? wrapped.toolCalls
+        : Array.isArray(wrapped.tool_calls)
+          ? wrapped.tool_calls
+          : [];
+      if (calls.length) {
+        for (const call of calls) {
           if (!isObject(call)) continue;
-          const id =
-            typeof call.id === "string"
-              ? call.id
-              : `${eventId}-${items.length}`;
-          if (toolById.has(id)) continue;
-          const tool: ActivityItem = {
-            key: `tool-${id}`,
-            kind: "tool",
-            title: toolName(call),
-            text: "Running",
-            detail: toolDetail(call),
-            timestamp,
-            status: "running",
-          };
-          toolById.set(id, tool);
-          items.push(tool);
+          const index =
+            typeof call.index === "number" || typeof call.index === "string"
+              ? String(call.index)
+              : "0";
+          const slot = `${eventId}-${index}`;
+          const id = typeof call.id === "string" ? call.id : null;
+          let tool = toolBySlot.get(slot);
+          if (!tool) {
+            tool = {
+              key: `tool-${id ?? slot}`,
+              kind: "tool",
+              title: toolName(call),
+              text: "Running",
+              timestamp,
+              status: "running",
+            };
+            toolBySlot.set(slot, tool);
+            items.push(tool);
+          }
+          const name = toolName(call);
+          if (name !== "Tool call") tool.title = name;
+          const detail = toolDetail(call);
+          if (detail)
+            tool.detail = `${tool.detail ?? ""}${detail}`.slice(0, 1200);
+          if (id) toolById.set(id, tool);
         }
       }
       continue;
@@ -107,7 +174,11 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
 
     if (eventType === "tool.response") {
       const callId =
-        typeof wrapped.toolCallId === "string" ? wrapped.toolCallId : eventId;
+        typeof wrapped.toolCallId === "string"
+          ? wrapped.toolCallId
+          : typeof wrapped.tool_call_id === "string"
+            ? wrapped.tool_call_id
+            : eventId;
       const existing = toolById.get(callId);
       if (existing) {
         existing.status = "success";
@@ -182,7 +253,9 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
         text:
           typeof wrapped.sandboxId === "string"
             ? wrapped.sandboxId
-            : "Daytona workspace created",
+            : typeof wrapped.sandbox_id === "string"
+              ? wrapped.sandbox_id
+              : "Daytona workspace created",
         timestamp,
         status: "success",
       });

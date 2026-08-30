@@ -7,6 +7,7 @@ import type {
 import {
   Activity,
   Bot,
+  BrainCircuit,
   Check,
   CheckCircle2,
   CircleAlert,
@@ -30,15 +31,6 @@ import { activityFromEvents } from "../lib/activity.js";
 import { formatTime, label } from "../lib/format.js";
 import { EmptyState } from "./common.js";
 
-function answerDecision(answer: string): AnswerQuestionInput["decision"] {
-  const normalized = answer.toLowerCase();
-  if (normalized.includes("approve")) return "approve";
-  if (normalized.includes("revise")) return "revise";
-  if (normalized.includes("cancel")) return "cancel";
-  if (normalized.includes("skip")) return "skip";
-  return "free_text";
-}
-
 function QuestionPrompt({
   question,
   busy,
@@ -51,13 +43,26 @@ function QuestionPrompt({
     decision: AnswerQuestionInput["decision"],
   ) => Promise<void>;
 }) {
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState<{
+    answer: string;
+    decision: AnswerQuestionInput["decision"];
+  } | null>(null);
   const [custom, setCustom] = useState("");
   const allowsCustom = question.gate_kind === "clarification";
-  const answer = custom.trim() || selected;
+  const reviewDecisions: AnswerQuestionInput["decision"][] = [
+    "approve",
+    "revise",
+    "cancel",
+  ];
+  const choices = question.options.map((answer, index) => ({
+    answer,
+    decision: allowsCustom ? "free_text" : (reviewDecisions[index] ?? "revise"),
+  }));
+  const answer = custom.trim() || selected?.answer || "";
+  const decision = custom.trim() ? "free_text" : selected?.decision;
 
   useEffect(() => {
-    setSelected("");
+    setSelected(null);
     setCustom("");
   }, [question.id]);
 
@@ -70,25 +75,27 @@ function QuestionPrompt({
       <p>{question.question_text}</p>
       {question.options.length ? (
         <div className="question-options">
-          {question.options.map((option) => (
+          {choices.map((choice) => (
             <button
-              key={option}
+              key={choice.answer}
               type="button"
               className={
-                selected === option
+                selected?.answer === choice.answer
                   ? "question-option question-option--selected"
                   : "question-option"
               }
               onClick={() => {
-                setSelected(option);
+                setSelected(choice);
                 setCustom("");
               }}
               disabled={busy}
             >
               <span className="question-option__radio">
-                {selected === option ? <Check size={12} /> : null}
+                {selected?.answer === choice.answer ? (
+                  <Check size={12} />
+                ) : null}
               </span>
-              {option}
+              {choice.answer}
             </button>
           ))}
         </div>
@@ -99,7 +106,7 @@ function QuestionPrompt({
           value={custom}
           onChange={(event) => {
             setCustom(event.target.value);
-            setSelected("");
+            setSelected(null);
           }}
           placeholder="Type your answer"
           disabled={busy}
@@ -108,8 +115,8 @@ function QuestionPrompt({
       <button
         className="button button--primary button--small"
         type="button"
-        disabled={busy || !answer}
-        onClick={() => onAnswer(answer, answerDecision(answer))}
+        disabled={busy || !answer || !decision}
+        onClick={() => decision && onAnswer(answer, decision)}
       >
         {busy ? (
           <LoaderCircle className="spin" size={15} />
@@ -148,7 +155,6 @@ export function AgentPane({
   const endRef = useRef<HTMLDivElement>(null);
   const activity = useMemo(() => activityFromEvents(events), [events]);
   const connected = Boolean(snapshot.workbook.trueforge_session_id);
-  const task = snapshot.tasks[0] ?? null;
   const pending = snapshot.pending_question;
   const turnRunning = Boolean(activeTurnId);
 
@@ -220,6 +226,7 @@ export function AgentPane({
             >
               <div className="activity-item__marker">
                 {item.kind === "assistant" ? <Bot size={15} /> : null}
+                {item.kind === "reasoning" ? <BrainCircuit size={15} /> : null}
                 {item.kind === "user" ? <MessageSquare size={15} /> : null}
                 {item.kind === "tool" ? <Activity size={15} /> : null}
                 {item.kind === "error" ? <XCircle size={15} /> : null}
@@ -265,9 +272,7 @@ export function AgentPane({
                 ? "Agent is working"
                 : "Message Kalki"
           }
-          disabled={
-            !connected || !task || Boolean(pending) || turnRunning || busy
-          }
+          disabled={!connected || Boolean(pending) || turnRunning || busy}
           maxLength={32_768}
         />
         <button
@@ -279,7 +284,6 @@ export function AgentPane({
           disabled={
             !message.trim() ||
             !connected ||
-            !task ||
             Boolean(pending) ||
             turnRunning ||
             busy

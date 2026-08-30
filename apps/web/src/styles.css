@@ -557,6 +557,16 @@ label {
   color: var(--green);
 }
 
+.activity-item--reasoning .activity-item__marker {
+  border-color: #e4c98d;
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.activity-item--reasoning .activity-item__body {
+  color: var(--muted);
+}
+
 .activity-item--user .activity-item__marker {
   border-color: #bed1df;
   background: var(--blue-soft);
