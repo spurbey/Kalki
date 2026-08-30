@@ -12,6 +12,7 @@
     "src/domain/errors.ts",
     "src/domain/workbookService.test.ts",
     "src/domain/workbookService.ts",
-    "src/index.ts"
+    "src/index.ts",
+    "src/trueforge/sessionClient.ts"
   ]
 }
