@@ -5,6 +5,7 @@ import {
   ProvenanceSchema,
   RecordEnvelopeSchema,
   RunSchema,
+  TrueForgeStreamEventSchema,
   WorkbookSnapshotSchema,
   WorkspaceRelativePathSchema,
 } from './domain.js';
@@ -93,6 +94,14 @@ describe('JSON values', () => {
 
   it('rejects non-finite numbers', () => {
     expect(JsonObjectSchema.safeParse({ value: Number.POSITIVE_INFINITY }).success).toBe(false);
+  });
+});
+
+describe('TrueForge stream events', () => {
+  it('keeps event names within the workbook event boundary', () => {
+    expect(TrueForgeStreamEventSchema.safeParse({ type: 'x'.repeat(94) }).success).toBe(true);
+    expect(TrueForgeStreamEventSchema.safeParse({ type: 'x'.repeat(95) }).success).toBe(false);
+    expect(TrueForgeStreamEventSchema.safeParse({ type: 'turn\ncreated' }).success).toBe(false);
   });
 });
 

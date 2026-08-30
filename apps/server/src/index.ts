@@ -7,22 +7,31 @@ import {
   CreateWorkbookInputSchema,
   HealthResponseSchema,
   IdSchema,
+  type JsonObject,
+  type JsonValue,
   TaskResponseSchema,
+  type TrueForgeStreamEvent,
   TrueForgeTurnResponseSchema,
   WorkbookResponseSchema,
   WorkbookSnapshotResponseSchema,
 } from '@kalki/contracts';
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { config } from './config.js';
 import { openDatabase } from './db/database.js';
 import { DomainError } from './domain/errors.js';
 import { WorkbookService } from './domain/workbookService.js';
+import { EventStore } from './events/eventStore.js';
 import { startWorkbookMcp } from './mcp/workbookServer.js';
-import { TrueForgeClient, type PendingTrueForgeQuestion } from './trueforge/sessionClient.js';
+import {
+  TrueForgeClient,
+  type PendingTrueForgeQuestion,
+} from './trueforge/sessionClient.js';
 import type { TrueForgeTurnInput } from '@kalki/contracts';
 
 const database = openDatabase(config.databasePath);
 const workbooks = new WorkbookService(database);
+const events = new EventStore(database);
 const trueForge = new TrueForgeClient({
   baseUrl: config.trueForgeBaseUrl,
   model: config.agentModel,
@@ -32,6 +41,7 @@ const trueForge = new TrueForgeClient({
 const app = new Hono();
 const connectingWorkbooks = new Set<string>();
 const turningWorkbooks = new Set<string>();
+const streamingTurns = new Set<string>();
 
 startWorkbookMcp(workbooks);
 
@@ -86,11 +96,69 @@ async function persistPendingQuestion(workbookId: string, turn: TrueForgeTurnInp
   });
 }
 
+function compactAgentEvent(event: TrueForgeStreamEvent): JsonObject {
+  const compact = (value: JsonValue): JsonValue => {
+    if (typeof value === 'string') return value.slice(0, 4000);
+    if (Array.isArray(value)) return value.slice(0, 50).map(compact);
+    if (value && typeof value === 'object') {
+      const result: JsonObject = {};
+      for (const [key, child] of Object.entries(value).slice(0, 50)) {
+        const normalized = key.toLowerCase();
+        if (normalized.includes('reasoning') || normalized === 'usage' || normalized === 'metrics') continue;
+        result[key] = compact(child);
+      }
+      return result;
+    }
+    return value;
+  };
+
+  const payload = compact(event) as JsonObject;
+  if (Buffer.byteLength(JSON.stringify(payload), 'utf8') <= 16_384) return payload;
+
+  const fallback: JsonObject = { type: event.type.slice(0, 94), payload_truncated: true };
+  for (const key of ['id', 'thread_id', 'created_at', 'content']) {
+    if (typeof event[key] === 'string') fallback[key] = event[key].slice(0, 4000);
+  }
+  if (Buffer.byteLength(JSON.stringify(fallback), 'utf8') <= 16_384) return fallback;
+  return { type: event.type.slice(0, 94), payload_truncated: true };
+}
+
+function startTurnStream(workbookId: string, sessionId: string, turnId: string) {
+  if (streamingTurns.has(turnId)) return;
+  streamingTurns.add(turnId);
+
+  void (async () => {
+    try {
+      const stored = workbooks.getCurrentTrueForgeTurn(workbookId);
+      const after = stored?.id === turnId ? stored.last_sequence_number : 0;
+      await trueForge.subscribeToTurn(sessionId, turnId, after, async (event, sequenceNumber) => {
+        events.appendTurnEvent(workbookId, turnId, sequenceNumber, `agent.${event.type}`, {
+          turn_id: turnId,
+          upstream_sequence: sequenceNumber,
+          event: compactAgentEvent(event),
+        });
+      });
+
+      const completed = await trueForge.getTurn(sessionId, turnId);
+      workbooks.saveTrueForgeTurn(workbookId, completed);
+      await persistPendingQuestion(workbookId, completed);
+    } catch (error) {
+      console.error(`TrueForge event stream failed for turn ${turnId}`, error);
+    } finally {
+      streamingTurns.delete(turnId);
+    }
+  })();
+}
+
 async function refreshCurrentTurn(workbookId: string) {
   const workbook = workbooks.getWorkbook(workbookId);
   if (!workbook.trueforge_session_id) return;
   const current = workbooks.getCurrentTrueForgeTurn(workbookId);
   if (!current || (current.status !== 'running' && current.required_actions.length === 0)) return;
+
+  if (current.status === 'running') {
+    startTurnStream(workbookId, workbook.trueforge_session_id, current.id);
+  }
 
   const upstream = await trueForge.getTurn(workbook.trueforge_session_id, current.id);
   workbooks.saveTrueForgeTurn(workbookId, upstream);
@@ -192,6 +260,68 @@ app.get('/api/v1/workbooks/:workbookId', async c => {
     console.error(error);
   }
   return c.json(WorkbookSnapshotResponseSchema.parse({ data: workbooks.getSnapshot(workbookId.data) }));
+});
+
+app.get('/api/v1/workbooks/:workbookId/events', c => {
+  const workbookId = IdSchema.safeParse(c.req.param('workbookId'));
+  if (!workbookId.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: 'invalid_request',
+          message: 'Invalid workbook id',
+          path: ['workbookId'],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+  const workbook = workbooks.getWorkbook(workbookId.data);
+  const currentTurn = workbooks.getCurrentTrueForgeTurn(workbook.id);
+  if (workbook.trueforge_session_id && currentTurn?.status === 'running') {
+    startTurnStream(workbook.id, workbook.trueforge_session_id, currentTurn.id);
+  }
+
+  const cursorValue = c.req.header('last-event-id') ?? c.req.query('after') ?? '0';
+  const initialCursor = Number(cursorValue);
+  if (!Number.isInteger(initialCursor) || initialCursor < 0) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: 'invalid_request',
+          message: 'Event cursor must be a non-negative integer',
+          path: ['after'],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+
+  return streamSSE(c, async stream => {
+    let cursor = initialCursor;
+    while (!stream.aborted) {
+      const available = events.listAfter(workbookId.data, cursor);
+      for (const event of available) {
+        await stream.writeSSE({
+          id: String(event.seq),
+          event: event.type,
+          data: JSON.stringify(event),
+        });
+        cursor = event.seq;
+      }
+      if (available.length === 0) {
+        await stream.writeSSE({
+          event: 'heartbeat',
+          data: JSON.stringify({ after: cursor }),
+        });
+      }
+      await stream.sleep(1000);
+    }
+  });
 });
 
 app.post('/api/v1/workbooks/:workbookId/connect', async c => {
@@ -351,6 +481,7 @@ app.post('/api/v1/workbooks/:workbookId/turns', async c => {
 
     try {
       const savedTurn = workbooks.saveTrueForgeTurn(workbook.id, turn);
+      startTurnStream(workbook.id, workbook.trueforge_session_id, savedTurn.id);
       await persistPendingQuestion(workbook.id, turn);
       return c.json(
         TrueForgeTurnResponseSchema.parse({
@@ -433,8 +564,9 @@ app.post('/api/v1/workbooks/:workbookId/questions/:toolCallId/answer', async c =
   }
 
   try {
-    workbooks.saveTrueForgeTurn(workbook.id, answerTurn);
+    const savedTurn = workbooks.saveTrueForgeTurn(workbook.id, answerTurn);
     workbooks.completeQuestion(workbook.id, toolCallId.data, input.data, answerTurn.id);
+    startTurnStream(workbook.id, workbook.trueforge_session_id, savedTurn.id);
   } catch (error) {
     workbooks.resetQuestionSubmission(workbook.id, toolCallId.data);
     throw error;

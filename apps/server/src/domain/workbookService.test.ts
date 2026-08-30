@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../db/database.js';
+import { EventStore } from '../events/eventStore.js';
 import { WorkbookService } from './workbookService.js';
 
 const jsonHash = (value: unknown) => createHash('sha256').update(canonicalJson(value)).digest('hex');
@@ -111,6 +112,39 @@ describe('workbook persistence', () => {
       expect(recoveredTurn?.status).toBe('done');
     } finally {
       rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('stores each streamed TrueForge event sequence once', () => {
+    const database = openDatabase(':memory:');
+    const service = new WorkbookService(database);
+    const eventStore = new EventStore(database);
+
+    try {
+      const workbook = service.createWorkbook({ title: 'Tesla research' });
+      service.connectTrueForgeSession(workbook.id, 'session-1');
+      service.saveTrueForgeTurn(workbook.id, {
+        id: 'turn-1',
+        sessionId: 'session-1',
+        previousTurnId: null,
+        status: 'running',
+        requiredActions: [],
+        createdAt: new Date().toISOString(),
+        finishedAt: null,
+      });
+      const after = eventStore.listAfter(workbook.id, 0).at(-1)?.seq ?? 0;
+
+      expect(
+        eventStore.appendTurnEvent(workbook.id, 'turn-1', 1, 'agent.turn.created', {}),
+      ).not.toBeNull();
+      expect(eventStore.appendTurnEvent(workbook.id, 'turn-1', 1, 'agent.turn.created', {})).toBeNull();
+      expect(
+        eventStore.appendTurnEvent(workbook.id, 'turn-1', 2, 'agent.model.message.delta', {}),
+      ).not.toBeNull();
+      expect(eventStore.listAfter(workbook.id, after)).toHaveLength(2);
+      expect(service.getCurrentTrueForgeTurn(workbook.id)?.last_sequence_number).toBe(2);
+    } finally {
+      database.close();
     }
   });
 
