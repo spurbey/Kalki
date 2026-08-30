@@ -8,7 +8,9 @@ import {
   HealthResponseSchema,
   IdSchema,
   type JsonObject,
+  type JsonValue,
   TaskResponseSchema,
+  type TrueForgeStreamEvent,
   TrueForgeTurnResponseSchema,
   WorkbookResponseSchema,
   WorkbookSnapshotResponseSchema,
@@ -24,7 +26,6 @@ import { startWorkbookMcp } from './mcp/workbookServer.js';
 import {
   TrueForgeClient,
   type PendingTrueForgeQuestion,
-  type TrueForgeStreamEvent,
 } from './trueforge/sessionClient.js';
 import type { TrueForgeTurnInput } from '@kalki/contracts';
 
@@ -96,14 +97,29 @@ async function persistPendingQuestion(workbookId: string, turn: TrueForgeTurnInp
 }
 
 function compactAgentEvent(event: TrueForgeStreamEvent): JsonObject {
-  const payload: JsonObject = { ...event };
-  delete payload.reasoning_content;
-  delete payload.usage;
-  if (typeof payload.content === 'string' && payload.content.length > 4000) {
-    payload.content = payload.content.slice(0, 4000);
-    payload.content_truncated = true;
+  const compact = (value: JsonValue): JsonValue => {
+    if (typeof value === 'string') return value.slice(0, 4000);
+    if (Array.isArray(value)) return value.slice(0, 50).map(compact);
+    if (value && typeof value === 'object') {
+      const result: JsonObject = {};
+      for (const [key, child] of Object.entries(value).slice(0, 50)) {
+        const normalized = key.toLowerCase();
+        if (normalized.includes('reasoning') || normalized === 'usage' || normalized === 'metrics') continue;
+        result[key] = compact(child);
+      }
+      return result;
+    }
+    return value;
+  };
+
+  const payload = compact(event) as JsonObject;
+  if (Buffer.byteLength(JSON.stringify(payload), 'utf8') <= 16_384) return payload;
+
+  const fallback: JsonObject = { type: event.type, payload_truncated: true };
+  for (const key of ['id', 'thread_id', 'created_at', 'content']) {
+    if (typeof event[key] === 'string') fallback[key] = event[key].slice(0, 4000);
   }
-  return payload;
+  return fallback;
 }
 
 function startTurnStream(workbookId: string, sessionId: string, turnId: string) {
@@ -261,7 +277,11 @@ app.get('/api/v1/workbooks/:workbookId/events', c => {
       400,
     );
   }
-  workbooks.getWorkbook(workbookId.data);
+  const workbook = workbooks.getWorkbook(workbookId.data);
+  const currentTurn = workbooks.getCurrentTrueForgeTurn(workbook.id);
+  if (workbook.trueforge_session_id && currentTurn?.status === 'running') {
+    startTurnStream(workbook.id, workbook.trueforge_session_id, currentTurn.id);
+  }
 
   const cursorValue = c.req.header('last-event-id') ?? c.req.query('after') ?? '0';
   const initialCursor = Number(cursorValue);

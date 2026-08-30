@@ -1,6 +1,7 @@
 import {
   IdSchema,
-  type JsonObject,
+  type TrueForgeStreamEvent,
+  TrueForgeStreamEventSchema,
   type TrueForgeTurnInput,
   TrueForgeTurnInputSchema,
 } from "@kalki/contracts";
@@ -17,6 +18,8 @@ const coordinatorInstructions = [
 
 const healthTimeoutMs = 3_000;
 const requestTimeoutMs = 30_000;
+const subscriptionWindowMs = 60_000;
+const subscriptionFailureLimit = 3;
 
 interface TrueForgeClientOptions {
   baseUrl: string;
@@ -33,8 +36,6 @@ export interface PendingTrueForgeQuestion {
   question: string;
   options: string[];
 }
-
-export type TrueForgeStreamEvent = JsonObject & { type: string };
 
 export class TrueForgeClient {
   constructor(private readonly options: TrueForgeClientOptions) {}
@@ -131,64 +132,84 @@ export class TrueForgeClient {
     onEvent: (event: TrueForgeStreamEvent, sequenceNumber: number) => Promise<void>,
   ): Promise<void> {
     let cursor = afterSequenceNumber;
+    let failures = 0;
 
     while (true) {
-      const response = await fetch(
-        `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/subscribe?after_sequence_number=${cursor}`,
-        { headers: { accept: "text/event-stream" } },
-      );
-      if (!response.ok || !response.body) {
-        throw new Error(
-          `TrueForge turn subscription failed (${response.status}): ${(await response.text()).slice(0, 1000)}`,
+      let receivedEvent = false;
+      try {
+        const response = await fetch(
+          `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/subscribe?after_sequence_number=${cursor}`,
+          {
+            headers: { accept: "text/event-stream" },
+            signal: AbortSignal.timeout(subscriptionWindowMs),
+          },
         );
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let eventId = "";
-      let dataLines: string[] = [];
-      let turnDone = false;
-
-      const emit = async () => {
-        if (dataLines.length === 0) return;
-        const sequenceNumber = Number(eventId);
-        if (!Number.isInteger(sequenceNumber) || sequenceNumber <= cursor) {
-          throw new Error("TrueForge turn stream returned an invalid sequence id");
+        if (response.status === 412) return;
+        if (!response.ok || !response.body) {
+          throw new Error(
+            `TrueForge turn subscription failed (${response.status}): ${(await response.text()).slice(0, 1000)}`,
+          );
         }
-        const parsed = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
-        if (typeof parsed.type !== "string") {
-          throw new Error("TrueForge turn stream returned an invalid event");
-        }
-        await onEvent(parsed as TrueForgeStreamEvent, sequenceNumber);
-        cursor = sequenceNumber;
-        turnDone = parsed.type === "turn.done";
-      };
 
-      while (!turnDone) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        buffer += decoder.decode(chunk.value, { stream: true });
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let eventId = "";
+        let dataLines: string[] = [];
+        let turnDone = false;
 
-        let newline = buffer.indexOf("\n");
-        while (newline !== -1) {
-          const line = buffer.slice(0, newline).replace(/\r$/, "");
-          buffer = buffer.slice(newline + 1);
-          if (line === "") {
-            await emit();
-            eventId = "";
-            dataLines = [];
-          } else if (line.startsWith("id:")) {
-            eventId = line.slice(3).trim();
-          } else if (line.startsWith("data:")) {
-            dataLines.push(line.slice(5).trimStart());
+        const emit = async () => {
+          if (dataLines.length === 0) return;
+          const sequenceNumber = Number(eventId);
+          if (!Number.isInteger(sequenceNumber) || sequenceNumber <= cursor) {
+            throw new Error("TrueForge turn stream returned an invalid sequence id");
           }
-          newline = buffer.indexOf("\n");
+          const event = TrueForgeStreamEventSchema.parse(
+            JSON.parse(dataLines.join("\n")),
+          );
+          await onEvent(event, sequenceNumber);
+          cursor = sequenceNumber;
+          receivedEvent = true;
+          turnDone = event.type === "turn.done";
+        };
+
+        try {
+          while (!turnDone) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            buffer += decoder.decode(chunk.value, { stream: true });
+
+            let newline = buffer.indexOf("\n");
+            while (newline !== -1) {
+              const line = buffer.slice(0, newline).replace(/\r$/, "");
+              buffer = buffer.slice(newline + 1);
+              if (line === "") {
+                await emit();
+                eventId = "";
+                dataLines = [];
+              } else if (line.startsWith("id:")) {
+                eventId = line.slice(3).trim();
+              } else if (line.startsWith("data:")) {
+                dataLines.push(line.slice(5).trimStart());
+              }
+              newline = buffer.indexOf("\n");
+            }
+          }
+        } finally {
+          reader.releaseLock();
         }
+
+        if (turnDone) return;
+        failures = receivedEvent ? 0 : failures + 1;
+        if (failures >= subscriptionFailureLimit) {
+          throw new Error("TrueForge turn subscription ended before turn.done");
+        }
+      } catch (error) {
+        failures = receivedEvent ? 0 : failures + 1;
+        if (failures >= subscriptionFailureLimit) throw error;
       }
 
-      reader.releaseLock();
-      if (turnDone) return;
+      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** failures));
     }
   }
 
