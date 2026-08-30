@@ -1069,6 +1069,23 @@ export class WorkbookService {
         throw new DomainError(`Table '${requested.table_slug}' was not found`, 'table_not_found', 404);
       }
       const table = this.parseTable(tableRow);
+      if (run.mode !== 'production') {
+        throw new DomainError('Test runs cannot publish formal rows', 'test_publish_forbidden', 409);
+      }
+      if (!['authorized', 'running'].includes(run.status) || task.state !== 'production_running') {
+        throw new DomainError('Production run is not accepting batches', 'invalid_run_state', 409);
+      }
+      const authorization = this.getProductionAuthorization({
+        run_id: run.id,
+        task_hash: requested.task_hash,
+        schema_hash: requested.schema_hash,
+        pipeline_hash: requested.pipeline_hash,
+      });
+      if (!authorization.authorized) {
+        const code = authorization.reason === 'approval_hash_mismatch' ? 'approval_hash_mismatch' : 'production_not_authorized';
+        throw new DomainError('Production authorization is not current', code, 409);
+      }
+
       const existingRow = this.database
         .prepare('SELECT * FROM run_batches WHERE run_id = ? AND table_id = ? AND batch_key = ?')
         .get(run.id, table.id, requested.batch_key);
@@ -1088,23 +1105,6 @@ export class WorkbookService {
           duplicates: existing.duplicate_count,
           published_row_count: existing.published_row_count_after,
         };
-      }
-
-      if (run.mode !== 'production') {
-        throw new DomainError('Test runs cannot publish formal rows', 'test_publish_forbidden', 409);
-      }
-      if (!['authorized', 'running'].includes(run.status) || task.state !== 'production_running') {
-        throw new DomainError('Production run is not accepting batches', 'invalid_run_state', 409);
-      }
-      const authorization = this.getProductionAuthorization({
-        run_id: run.id,
-        task_hash: requested.task_hash,
-        schema_hash: requested.schema_hash,
-        pipeline_hash: requested.pipeline_hash,
-      });
-      if (!authorization.authorized) {
-        const code = authorization.reason === 'approval_hash_mismatch' ? 'approval_hash_mismatch' : 'production_not_authorized';
-        throw new DomainError('Production authorization is not current', code, 409);
       }
 
       const schema = TableSchemaDocumentSchema.parse(table.schema);

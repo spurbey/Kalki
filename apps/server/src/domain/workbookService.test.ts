@@ -488,6 +488,12 @@ describe('workbook persistence', () => {
       };
       expect(firstService.publishBatch(sourceBatch)).toMatchObject({ inserted: 5, replayed: false });
       expect(firstService.publishBatch(sourceBatch)).toMatchObject({ inserted: 5, replayed: true });
+      expect(() =>
+        firstService.publishBatch({
+          ...sourceBatch,
+          pipeline_hash: 'c'.repeat(64),
+        }),
+      ).toThrow();
       const changedSourceRecords = sourceSamples.slice(0, 4);
       expect(() =>
         firstService.publishBatch({
