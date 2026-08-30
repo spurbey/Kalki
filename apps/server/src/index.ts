@@ -119,7 +119,8 @@ function compactAgentEvent(event: TrueForgeStreamEvent): JsonObject {
   for (const key of ['id', 'thread_id', 'created_at', 'content']) {
     if (typeof event[key] === 'string') fallback[key] = event[key].slice(0, 4000);
   }
-  return fallback;
+  if (Buffer.byteLength(JSON.stringify(fallback), 'utf8') <= 16_384) return fallback;
+  return { type: event.type.slice(0, 94), payload_truncated: true };
 }
 
 function startTurnStream(workbookId: string, sessionId: string, turnId: string) {
