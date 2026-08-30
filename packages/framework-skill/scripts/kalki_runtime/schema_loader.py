@@ -15,10 +15,15 @@ COLUMN_KEYS = {"name", "type", "nullable", "description", "minimum", "maximum", 
 TYPES = {"string", "integer", "number", "boolean", "date", "datetime", "url", "enum"}
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 COLUMN_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+MAX_SAFE_JSON_NUMBER = 2**53 - 1
 
 
 def canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True)
+
+
+def _utf16_hex(value: str) -> str:
+    return value.encode("utf-16-be", "surrogatepass").hex()
 
 
 def _hash_tree(value: object) -> object:
@@ -28,21 +33,28 @@ def _hash_tree(value: object) -> object:
         return {"t": "boolean", "v": value}
     if isinstance(value, (int, float)):
         try:
-            number = float(value)
-            if not math.isfinite(number):
+            if isinstance(value, int) and abs(value) > MAX_SAFE_JSON_NUMBER:
                 raise ValueError
+            number = float(value)
+            if not math.isfinite(number) or abs(number) > MAX_SAFE_JSON_NUMBER:
+                raise ValueError
+            if number == 0:
+                number = 0.0
             encoded = struct.pack(">d", number).hex()
         except (OverflowError, ValueError, struct.error) as error:
             raise TypeError("Value is not JSON serializable") from error
         return {"t": "number", "v": encoded}
     if isinstance(value, str):
-        return {"t": "string", "v": value}
+        return {"t": "string", "v": _utf16_hex(value)}
     if isinstance(value, list):
         return {"t": "array", "v": [_hash_tree(item) for item in value]}
     if isinstance(value, dict):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("Value is not JSON serializable")
-        entries = [[key, _hash_tree(value[key])] for key in sorted(value, key=lambda item: item.encode("utf-16-be"))]
+        entries = [
+            [_utf16_hex(key), _hash_tree(value[key])]
+            for key in sorted(value, key=lambda item: item.encode("utf-16-be", "surrogatepass"))
+        ]
         return {"t": "object", "v": entries}
     raise TypeError("Value is not JSON serializable")
 

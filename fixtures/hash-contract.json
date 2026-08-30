@@ -6,11 +6,12 @@
       true,
       1,
       0.1,
-      -0.0,
+      -0,
       "formula-like =SUM(A1)",
       {
         "b": 2.5,
-        "a": "text"
+        "a": "text",
+        "surrogate": "\ud800"
       }
     ],
     "a": {
@@ -20,5 +21,5 @@
       ]
     }
   },
-  "sha256": "686c2606a46a870484b37e1409130e055da736871dbe73689e342090ecc6956f"
+  "sha256": "5d8d83ad4d380a9ddaf17c3221040bb50c27dcf9de855e588b7173a0c0df8c6b"
 }

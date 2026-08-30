@@ -95,6 +95,10 @@ describe('JSON values', () => {
   it('rejects non-finite numbers', () => {
     expect(JsonObjectSchema.safeParse({ value: Number.POSITIVE_INFINITY }).success).toBe(false);
   });
+
+  it('rejects numbers outside the shared JSON range', () => {
+    expect(JsonObjectSchema.safeParse({ value: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
+  });
 });
 
 describe('TrueForge stream events', () => {

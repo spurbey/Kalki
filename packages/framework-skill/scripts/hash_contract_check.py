@@ -10,6 +10,12 @@ def main() -> None:
     actual = hash_json(fixture["value"])
     if actual != fixture["sha256"]:
         raise SystemExit(f"hash mismatch: {actual} != {fixture['sha256']}")
+    try:
+        hash_json({"unsafe": 2**53})
+    except TypeError:
+        pass
+    else:
+        raise SystemExit("unsafe integer was accepted")
     print("HASH_CONTRACT_OK")
 
 

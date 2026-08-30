@@ -19,7 +19,17 @@ const TrueForgeStreamEventTypeSchema = z
   .regex(/^[^\u0000-\u001F\u007F]*$/, 'event type cannot contain control characters');
 
 export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([z.null(), z.boolean(), z.number().finite(), z.string(), z.array(JsonValueSchema), JsonObjectSchema]),
+  z.union([
+    z.null(),
+    z.boolean(),
+    z
+      .number()
+      .finite()
+      .refine(value => Math.abs(value) <= Number.MAX_SAFE_INTEGER, 'number exceeds JavaScript safe range'),
+    z.string(),
+    z.array(JsonValueSchema),
+    JsonObjectSchema,
+  ]),
 );
 
 export const JsonObjectSchema: z.ZodType<JsonObject> = z.lazy(() =>
@@ -49,17 +59,27 @@ export function canonicalJson(value: unknown): string {
   return serialized;
 }
 
+function utf16Hex(value: string): string {
+  let encoded = '';
+  for (let index = 0; index < value.length; index += 1) {
+    encoded += value.charCodeAt(index).toString(16).padStart(4, '0');
+  }
+  return encoded;
+}
+
 function hashTree(value: unknown): unknown {
   if (value === null) return { t: 'null' };
   if (typeof value === 'boolean') return { t: 'boolean', v: value };
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('Value is not JSON serializable');
+    if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) {
+      throw new TypeError('Value is outside the shared JSON number range');
+    }
     const buffer = new ArrayBuffer(8);
-    new DataView(buffer).setFloat64(0, value, false);
+    new DataView(buffer).setFloat64(0, Object.is(value, -0) ? 0 : value, false);
     const bytes = Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, '0')).join('');
     return { t: 'number', v: bytes };
   }
-  if (typeof value === 'string') return { t: 'string', v: value };
+  if (typeof value === 'string') return { t: 'string', v: utf16Hex(value) };
   if (Array.isArray(value)) return { t: 'array', v: value.map(hashTree) };
   if (value && typeof value === 'object') {
     const prototype = Object.getPrototypeOf(value);
@@ -71,7 +91,7 @@ function hashTree(value: unknown): unknown {
       t: 'object',
       v: Object.keys(object)
         .sort()
-        .map(key => [key, hashTree(object[key])]),
+        .map(key => [utf16Hex(key), hashTree(object[key])]),
     };
   }
   throw new TypeError('Value is not JSON serializable');
