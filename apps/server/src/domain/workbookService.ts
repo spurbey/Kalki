@@ -1010,6 +1010,7 @@ export class WorkbookService {
     const approval = this.database
       .prepare('SELECT * FROM approval_events WHERE id = ? AND run_id = ?')
       .get(run.approval_event_id, run.id) as Record<string, unknown> | undefined;
+    const workbook = this.getWorkbook(task.workbook_id);
 
     if (!approval) return denied('approval_evidence_missing');
     if (
@@ -1034,6 +1035,9 @@ export class WorkbookService {
       run_id: run.id,
       approved_at: run.approved_at,
       approval_event_id: run.approval_event_id,
+      workbook_id: workbook.id,
+      task_id: task.id,
+      trueforge_turn_id: workbook.current_trueforge_turn_id,
       hashes,
     };
   }

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .pipeline_spec import load_pipeline
-from .runner import run_test
+from .runner import finalize_production, next_batch, run_test, start_production
 
 
 def _workspace(value: str | None) -> Path:
@@ -30,9 +30,33 @@ def main(argv: list[str] | None = None) -> int:
     test.add_argument("--run-id")
     test.add_argument("--limit", type=int)
 
+    production = commands.add_parser("start-production")
+    production.add_argument("--pipeline", required=True)
+    production.add_argument("--workspace")
+    production.add_argument("--run-id", required=True)
+
+    batch = commands.add_parser("next-batch")
+    batch.add_argument("--workspace")
+    batch.add_argument("--run-id", required=True)
+    batch.add_argument("--limit", type=int, default=50)
+
+    finalize = commands.add_parser("finalize")
+    finalize.add_argument("--workspace")
+    finalize.add_argument("--run-id", required=True)
+
     args = parser.parse_args(argv)
     try:
-        pipeline = load_pipeline(_workspace(args.workspace), args.pipeline)
+        workspace = _workspace(args.workspace)
+        if "/" in getattr(args, "run_id", "") or "\\" in getattr(args, "run_id", ""):
+            raise ValueError("run id must not contain path separators")
+        if args.command == "next-batch":
+            _print(next_batch(workspace, args.run_id, args.limit))
+            return 0
+        if args.command == "finalize":
+            _print(finalize_production(workspace, args.run_id))
+            return 0
+
+        pipeline = load_pipeline(workspace, args.pipeline)
         if args.command == "lint":
             _print(
                 {
@@ -46,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
                     "error": None,
                 }
             )
+            return 0
+
+        if args.command == "start-production":
+            _print(start_production(pipeline, args.run_id))
             return 0
 
         run_id = args.run_id or os.environ.get("KALKI_RUN_ID")

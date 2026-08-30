@@ -41,6 +41,10 @@ def write_json(path: Path, value: object) -> str:
     return _replace(path, f"{canonical_json(value)}\n".encode("utf-8"))
 
 
+def write_text(path: Path, value: str) -> str:
+    return _replace(path, value.encode("utf-8"))
+
+
 def write_jsonl(path: Path, records: list[RecordEnvelope]) -> str:
     data = "".join(f"{canonical_json(envelope_dict(record))}\n" for record in records).encode("utf-8")
     return _replace(path, data)
