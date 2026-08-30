@@ -18,19 +18,27 @@ description: Build reviewed web-research workflows that keep raw data in files a
 
 ## State-Aware Runbook
 
-1. Align the request and author `task.md`; call `register_task`.
-2. Ask the canonical task review question and wait for the user.
-3. Explore the unfamiliar source with Playwright, inspect relevant network requests, and save compact evidence under `research/`.
-4. Author the complete schema set, lint it, and call `register_schema` once with every table.
-5. Ask the schema review question and wait for the user.
-6. Generate operators from the recorded evidence and author one pipeline YAML.
-7. Run `python -m kalki_runtime.pipeline_cli lint --pipeline <path>`.
-8. For a browser-backed source, navigate the reviewed data URL directly before execution. Create a test run with `start_run`, then run `python -m kalki_runtime.pipeline_cli test --pipeline <path> --run-id <id> --limit 5`.
-9. Read the compact manifest and at most five envelopes per table, then call `complete_run`. Pass the manifest as an object and each full envelope with `data`, `dedupe_key`, and `provenance`, not JSON strings or data-only rows. Show the persisted result; test rows remain sandbox-only.
-10. Create a production run with the same hashes, ask the explicit production review question, and wait for the user's answer.
-11. After approval, run `start-production` with that production run ID. It checks authorization before reading the source.
-12. Run `next-batch` until its compact manifest reports `state=ready_to_finalize`.
-13. Run `finalize`; it records artifact metadata and completes the production run.
+1. Call `get_workbook_context` with the workbook id provided in the session instructions. Never guess it.
+2. Scaffold the workspace with the returned task id, then install the small runtime dependency set:
+
+   ```bash
+   python /opt/tf/skills/kalki-framework/scripts/scaffold_task.py --workspace "$PWD" --workbook-id <workbook-id> --task-id <task-id>
+   python -m pip install --disable-pip-version-check --quiet --target "$PWD/.kalki/deps" -r /opt/tf/skills/kalki-framework/requirements.txt
+   ```
+
+3. Align the request and author `task.md`; call `register_task`.
+4. Ask the canonical task review question and wait for the user.
+5. Explore the unfamiliar source with Playwright, inspect relevant network requests, and save compact evidence under `research/`.
+6. Author the complete schema set, lint it, and call `register_schema` once with every table.
+7. Ask the schema review question and wait for the user.
+8. Generate operators from the recorded evidence and author one pipeline YAML.
+9. Run the pipeline CLI with `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client"`.
+10. For a browser-backed source, navigate the reviewed data URL directly before execution. Create a test run with `start_run`, then run the CLI test command with `--limit 5`.
+11. Read the compact manifest and at most five envelopes per table, then call `complete_run`. Pass the manifest as an object and each full envelope with `data`, `dedupe_key`, and `provenance`, not JSON strings or data-only rows. Show the persisted result; test rows remain sandbox-only.
+12. Create a production run with the same hashes, ask the explicit production review question, and wait for the user's answer.
+13. After approval, run `start-production` with that production run ID. It checks authorization before reading the source.
+14. Run `next-batch` until its compact manifest reports `state=ready_to_finalize`.
+15. Run `finalize`; it records artifact metadata and completes the production run.
 
 Skill promotion remains unavailable until `promote_skill` appears in `tools/list`.
 

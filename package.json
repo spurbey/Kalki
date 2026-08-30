@@ -11,6 +11,7 @@
     "node": ">=22.14.0"
   },
   "scripts": {
+    "dev": "npm run build -w @kalki/contracts && concurrently -k -n server,web \"npm:dev:server\" \"npm:dev:web\"",
     "dev:web": "npm run dev -w @kalki/web",
     "dev:server": "npm run dev -w @kalki/server",
     "build": "npm run build -w @kalki/contracts && npm run build -w @kalki/server && npm run build -w @kalki/web",
@@ -20,6 +21,7 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "prettier": "^3.6.2",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
