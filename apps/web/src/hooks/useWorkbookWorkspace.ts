@@ -135,11 +135,16 @@ export function useWorkbookWorkspace() {
     setError("");
     try {
       if (!snapshot.tasks.length) {
-        await api.createTask(workbookId, {
+        const task = await api.createTask(workbookId, {
           slug: taskSlug(snapshot.workbook.title),
           title: snapshot.workbook.title,
           objective: message,
         });
+        setSnapshot((current) =>
+          current?.workbook.id === workbookId
+            ? { ...current, tasks: [task] }
+            : current,
+        );
       }
       const turn = await api.createTurn(workbookId, { input: message });
       setActiveTurnId(turn.status === "running" ? turn.id : null);
