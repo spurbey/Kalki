@@ -6,7 +6,7 @@ Generated code imports framework types instead of redefining them:
 from kalki_runtime.contracts import RecordEnvelope, RunContext
 ```
 
-A source exposes a zero-argument class with:
+`SourceOperator` and `Transformer` are structural protocols, not base classes. A source exposes a zero-argument class with:
 
 ```python
 def collect(self, context: RunContext):
@@ -20,4 +20,4 @@ def transform(self, records, context: RunContext):
     yield RecordEnvelope(...)
 ```
 
-Read configuration from `context.config`. Sources use `context.http`; transformers perform no network calls. Do not write JSONL directly, access SQLite, read secrets, or guess the workspace path.
+Read configuration from `context.config`. Sources use `context.http` only for endpoints supported by recorded research evidence; transformers perform no network calls. Do not write JSONL directly, access SQLite, read secrets, or guess the workspace path.

@@ -12,8 +12,8 @@ Class references use `<workspace-relative-python-file>:<ClassName>`.
 Current commands:
 
 ```bash
-python -m kalki_runtime.pipeline_cli lint --pipeline pipelines/tesla.yaml
-python -m kalki_runtime.pipeline_cli test --pipeline pipelines/tesla.yaml --run-id <id> --limit 5
+python -m kalki_runtime.pipeline_cli lint --pipeline pipelines/<name>.yaml
+python -m kalki_runtime.pipeline_cli test --pipeline pipelines/<name>.yaml --run-id <id> --limit 5
 ```
 
 `lint` performs no network request. `test` writes bounded JSONL and a compact manifest under `runs/<run-id>/` and never publishes formal rows.

@@ -7,6 +7,12 @@ The Daytona image provides:
 /opt/tf/mcp-client/mcp_client.py
 ```
 
-Use `mcp-client` to list and call configured workbook tools without exposing connector credentials. Prefer direct coordinator tool calls for small payloads. Use Code Mode when arguments are generated from workspace files.
+Discover deferred tools through TrueForge before entering Code Mode. The sandbox CLI invokes a known tool; it does not list tools:
+
+```bash
+mcp-client call-tool <server> <tool> '<args-json>'
+```
+
+Prefer direct coordinator tool calls for bounded browser reconnaissance and small payloads. Use Code Mode when arguments come from workspace files or tool output must be reduced before entering model context.
 
 Never print bearer tokens, connector settings, full table rows, or raw tool-result files. Check `tools/list` before relying on a command because Kalki exposes only implemented workflow stages.
