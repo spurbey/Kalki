@@ -1,5 +1,6 @@
 import {
   IdSchema,
+  type JsonObject,
   type TrueForgeTurnInput,
   TrueForgeTurnInputSchema,
 } from "@kalki/contracts";
@@ -32,6 +33,8 @@ export interface PendingTrueForgeQuestion {
   question: string;
   options: string[];
 }
+
+export type TrueForgeStreamEvent = JsonObject & { type: string };
 
 export class TrueForgeClient {
   constructor(private readonly options: TrueForgeClientOptions) {}
@@ -119,6 +122,74 @@ export class TrueForgeClient {
         content: input.content,
       },
     ]);
+  }
+
+  async subscribeToTurn(
+    sessionId: string,
+    turnId: string,
+    afterSequenceNumber: number,
+    onEvent: (event: TrueForgeStreamEvent, sequenceNumber: number) => Promise<void>,
+  ): Promise<void> {
+    let cursor = afterSequenceNumber;
+
+    while (true) {
+      const response = await fetch(
+        `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/subscribe?after_sequence_number=${cursor}`,
+        { headers: { accept: "text/event-stream" } },
+      );
+      if (!response.ok || !response.body) {
+        throw new Error(
+          `TrueForge turn subscription failed (${response.status}): ${(await response.text()).slice(0, 1000)}`,
+        );
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let eventId = "";
+      let dataLines: string[] = [];
+      let turnDone = false;
+
+      const emit = async () => {
+        if (dataLines.length === 0) return;
+        const sequenceNumber = Number(eventId);
+        if (!Number.isInteger(sequenceNumber) || sequenceNumber <= cursor) {
+          throw new Error("TrueForge turn stream returned an invalid sequence id");
+        }
+        const parsed = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+        if (typeof parsed.type !== "string") {
+          throw new Error("TrueForge turn stream returned an invalid event");
+        }
+        await onEvent(parsed as TrueForgeStreamEvent, sequenceNumber);
+        cursor = sequenceNumber;
+        turnDone = parsed.type === "turn.done";
+      };
+
+      while (!turnDone) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+
+        let newline = buffer.indexOf("\n");
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).replace(/\r$/, "");
+          buffer = buffer.slice(newline + 1);
+          if (line === "") {
+            await emit();
+            eventId = "";
+            dataLines = [];
+          } else if (line.startsWith("id:")) {
+            eventId = line.slice(3).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trimStart());
+          }
+          newline = buffer.indexOf("\n");
+        }
+      }
+
+      reader.releaseLock();
+      if (turnDone) return;
+    }
   }
 
   async getPendingQuestion(
