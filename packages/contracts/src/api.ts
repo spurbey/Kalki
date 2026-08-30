@@ -16,6 +16,7 @@ import {
   SlugSchema,
   TaskSchema,
   TableRowSchema,
+  TimestampSchema,
   TrueForgeTurnSchema,
   WorkbookSchema,
   WorkbookSnapshotSchema,
@@ -218,6 +219,31 @@ export const HealthResponseSchema = z
     trueforge: z.boolean(),
   })
   .strict();
+
+const BrowserUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  }, 'Browser URL must use HTTP or HTTPS');
+
+export const BrowserStatusSchema = z
+  .object({
+    available: z.boolean(),
+    url: z.string().max(4000).nullable(),
+    title: z.string().max(1000).nullable(),
+    tab_count: z.number().int().nonnegative(),
+    screenshot_at: TimestampSchema.nullable(),
+    error: z.string().max(1000).nullable(),
+  })
+  .strict();
+
+export const BrowserStatusResponseSchema = z.object({ data: BrowserStatusSchema }).strict();
+
+export const BrowserNavigateInputSchema = z.object({ url: BrowserUrlSchema }).strict();
+
 export const WorkbookResponseSchema = z.object({ data: WorkbookSchema }).strict();
 export const TaskResponseSchema = z.object({ data: TaskSchema }).strict();
 export const TrueForgeTurnResponseSchema = z.object({ data: TrueForgeTurnSchema }).strict();
@@ -499,6 +525,9 @@ export type RegisterTaskData = z.infer<typeof RegisterTaskDataSchema>;
 export type RegisterSchemaData = z.infer<typeof RegisterSchemaDataSchema>;
 export type StartRunData = z.infer<typeof StartRunDataSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
+export type BrowserStatus = z.infer<typeof BrowserStatusSchema>;
+export type BrowserNavigateInput = z.infer<typeof BrowserNavigateInputSchema>;
+export type BrowserStatusResponse = z.infer<typeof BrowserStatusResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
 export type TrueForgeTurnResponse = z.infer<typeof TrueForgeTurnResponseSchema>;

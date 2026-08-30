@@ -1,0 +1,214 @@
+import type { BrowserStatus } from "@kalki/contracts";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { config } from "../config.js";
+
+type ToolResult = {
+  content?: Array<{
+    type?: string;
+    text?: string;
+    data?: string;
+  }>;
+  isError?: boolean;
+};
+
+type BrowserTab = {
+  index: number;
+  title: string;
+  url: string;
+  current: boolean;
+};
+
+const unavailableStatus: BrowserStatus = {
+  available: false,
+  url: null,
+  title: null,
+  tab_count: 0,
+  screenshot_at: null,
+  error: null,
+};
+
+function resultText(result: unknown): string {
+  if (!result || typeof result !== "object") return "";
+  const content = (result as ToolResult).content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\n");
+}
+
+function resultImage(result: unknown): Buffer | null {
+  if (!result || typeof result !== "object") return null;
+  const content = (result as ToolResult).content;
+  if (!Array.isArray(content)) return null;
+  const image = content.find(
+    (item) => item.type === "image" && typeof item.data === "string",
+  );
+  return image?.data ? Buffer.from(image.data, "base64") : null;
+}
+
+function parseTabs(text: string): BrowserTab[] {
+  const tabs: BrowserTab[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^- (\d+): (\(current\) )?\[(.*)\]\((.*)\)$/);
+    if (!match) continue;
+    tabs.push({
+      index: Number(match[1]),
+      current: Boolean(match[2]),
+      title: match[3] ?? "",
+      url: match[4] ?? "",
+    });
+  }
+  return tabs;
+}
+
+function errorMessage(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(
+    0,
+    1000,
+  );
+}
+
+export class PlaywrightBrowser {
+  private client: Client | null = null;
+  private connection: Promise<void> | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
+  private screenshotAt: string | null = null;
+
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(operation, operation);
+    this.queue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  async keepAlive(): Promise<void> {
+    await this.status();
+  }
+
+  async status(): Promise<BrowserStatus> {
+    return this.serialize(async () => {
+      try {
+        await this.connect();
+        const tabs = await this.readTabs();
+        const aligned = await this.alignResearchTab(tabs);
+        const current = aligned.find((tab) => tab.current) ?? aligned[0];
+        const status: BrowserStatus = {
+          available: true,
+          url: current?.url || null,
+          title: current?.title || null,
+          tab_count: aligned.length,
+          screenshot_at: this.screenshotAt,
+          error: null,
+        };
+        return status;
+      } catch (error) {
+        this.disconnect();
+        return {
+          ...unavailableStatus,
+          screenshot_at: this.screenshotAt,
+          error: errorMessage(error),
+        };
+      }
+    });
+  }
+
+  async navigate(url: string): Promise<BrowserStatus> {
+    return this.serialize(async () => {
+      await this.callTool("browser_navigate", { url });
+      const tabs = await this.readTabs();
+      const aligned = await this.alignResearchTab(tabs);
+      const current = aligned.find((tab) => tab.current) ?? aligned[0];
+      return {
+        available: true,
+        url: current?.url || url,
+        title: current?.title || null,
+        tab_count: aligned.length,
+        screenshot_at: this.screenshotAt,
+        error: null,
+      } satisfies BrowserStatus;
+    });
+  }
+
+  async screenshot(): Promise<Buffer> {
+    return this.serialize(async () => {
+      const tabs = await this.readTabs();
+      await this.alignResearchTab(tabs);
+      const result = await this.callTool("browser_take_screenshot", {
+        type: "jpeg",
+        scale: "css",
+      });
+      const image = resultImage(result);
+      if (!image) throw new Error("Playwright did not return a screenshot");
+      this.screenshotAt = new Date().toISOString();
+      return image;
+    });
+  }
+
+  private async connect(): Promise<void> {
+    if (this.client) return;
+    if (this.connection) return this.connection;
+
+    this.connection = (async () => {
+      const client = new Client({
+        name: "kalki-browser-bridge",
+        version: "0.1.0",
+      });
+      const transport = new StreamableHTTPClientTransport(
+        new URL(config.playwrightMcpUrl),
+      );
+      try {
+        await client.connect(transport as Parameters<Client["connect"]>[0]);
+        this.client = client;
+      } catch (error) {
+        await client.close().catch(() => undefined);
+        throw error;
+      } finally {
+        this.connection = null;
+      }
+    })();
+
+    return this.connection;
+  }
+
+  private disconnect(): void {
+    const client = this.client;
+    this.client = null;
+    if (client) void client.close().catch(() => undefined);
+  }
+
+  private async readTabs(): Promise<BrowserTab[]> {
+    const result = await this.callTool("browser_tabs", { action: "list" });
+    if ((result as ToolResult).isError) {
+      throw new Error(resultText(result) || "Playwright tab listing failed");
+    }
+    return parseTabs(resultText(result));
+  }
+
+  private async alignResearchTab(tabs: BrowserTab[]): Promise<BrowserTab[]> {
+    const current = tabs.find((tab) => tab.current);
+    const research =
+      tabs.find((tab) => tab.url && tab.url !== "about:blank") ?? current;
+    if (research && current?.index !== research.index) {
+      await this.callTool("browser_tabs", {
+        action: "select",
+        index: research.index,
+      });
+      return this.readTabs();
+    }
+    return tabs;
+  }
+
+  private async callTool(name: string, args: Record<string, unknown>) {
+    await this.connect();
+    if (!this.client) throw new Error("Playwright client is not connected");
+    const result = await this.client.callTool({ name, arguments: args });
+    if ((result as ToolResult).isError) {
+      throw new Error(resultText(result) || `Playwright tool '${name}' failed`);
+    }
+    return result;
+  }
+}
