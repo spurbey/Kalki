@@ -16,6 +16,7 @@ const coordinatorInstructions = [
   "Narrate each stage and major tool action with a short user-facing intent or observation.",
   "Summarize reasoning without exposing private chain-of-thought.",
   "Use ask_user_question for task, schema, production, and skill-promotion review.",
+  "Never ask for production approval until start_run has created the matching production run.",
   "Never treat silence, timeout, tool approval, or auto-continue as user consent.",
   "Keep raw rows in files and return compact manifests only.",
   "Never dump complete pages or API responses into model context; inspect bounded evidence only.",

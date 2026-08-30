@@ -37,7 +37,7 @@ description: Build reviewed web-research workflows that keep raw data in files a
 9. Run the pipeline CLI with `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client"`.
 10. For a browser-backed source, navigate the reviewed data URL directly before execution. Create a test run with `start_run`, then run the CLI test command with `--limit 5`.
 11. Read the compact manifest and at most five envelopes per table, then call `complete_run`. Pass the manifest as an object and each full envelope with `data`, `dedupe_key`, and `provenance`, not JSON strings or data-only rows. Show the persisted result; test rows remain sandbox-only.
-12. Create a production run with the same hashes, ask the explicit production review question, and wait for the user's answer.
+12. Create a production run with the same hashes. Only after `start_run` returns `awaiting_confirmation`, ask the explicit production review question and wait for the user's answer.
 13. After approval, run `start-production` with that production run ID. It checks authorization before reading the source.
 14. Run `next-batch` until its compact manifest reports `state=ready_to_finalize`.
 15. Run `finalize`; it records artifact metadata and completes the production run.
