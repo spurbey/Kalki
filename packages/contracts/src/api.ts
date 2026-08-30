@@ -11,6 +11,7 @@ import {
   Sha256Schema,
   SlugSchema,
   TaskSchema,
+  TrueForgeTurnSchema,
   WorkbookSchema,
   WorkbookSnapshotSchema,
   WorkspaceRelativePathSchema,
@@ -47,9 +48,15 @@ export const CreateTurnInputSchema = z
   })
   .strict();
 
-export const HealthResponseSchema = z.object({ ok: z.literal(true) }).strict();
+export const HealthResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    trueforge: z.boolean(),
+  })
+  .strict();
 export const WorkbookResponseSchema = z.object({ data: WorkbookSchema }).strict();
 export const TaskResponseSchema = z.object({ data: TaskSchema }).strict();
+export const TrueForgeTurnResponseSchema = z.object({ data: TrueForgeTurnSchema }).strict();
 export const WorkbookSnapshotResponseSchema = z.object({ data: WorkbookSnapshotSchema }).strict();
 export const ApiErrorResponseSchema = z.object({ error: PortableErrorSchema }).strict();
 
@@ -305,6 +312,7 @@ export type CreateTurnInput = z.infer<typeof CreateTurnInputSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
+export type TrueForgeTurnResponse = z.infer<typeof TrueForgeTurnResponseSchema>;
 export type WorkbookSnapshotResponse = z.infer<typeof WorkbookSnapshotResponseSchema>;
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;
 export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
