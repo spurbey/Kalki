@@ -566,6 +566,22 @@ describe('workbook persistence', () => {
       firstService.completeRun(productionCompletion);
       firstService.completeRun(productionCompletion);
 
+      const historyTable = firstService
+        .getSnapshot(workbook.id)
+        .tables.find((table) => table.slug === 'tesla-history');
+      expect(historyTable).toBeDefined();
+      const firstPage = firstService.getTableRows(historyTable!.id, productionRun.run_id, undefined, 3);
+      expect(firstPage.rows).toHaveLength(3);
+      expect(firstPage.next_cursor).toBeTruthy();
+      const secondPage = firstService.getTableRows(
+        historyTable!.id,
+        productionRun.run_id,
+        firstPage.next_cursor ?? undefined,
+        3,
+      );
+      expect(secondPage.rows).toHaveLength(2);
+      expect(secondPage.next_cursor).toBeNull();
+
       const otherTask = firstService.createTask(workbook.id, {
         slug: 'other-task',
         title: 'Other task',

@@ -1723,6 +1723,60 @@ export class WorkbookService {
     });
   }
 
+  getTableRows(tableId: string, runId: string, after: string | undefined, limit: number) {
+    const tableRow = this.database.prepare('SELECT * FROM tables WHERE id = ?').get(tableId);
+    if (!tableRow) throw new DomainError(`Table '${tableId}' was not found`, 'table_not_found', 404);
+    const table = this.parseTable(tableRow);
+
+    const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(runId);
+    if (!runRow) throw new DomainError(`Run '${runId}' was not found`, 'run_not_found', 404);
+    const run = this.parseRun(runRow);
+    if (run.task_id !== table.task_id) {
+      throw new DomainError('Table and run do not belong to the same task', 'table_run_mismatch', 409);
+    }
+
+    let afterCreatedAt: string | null = null;
+    let afterId: string | null = null;
+    if (after !== undefined) {
+      const separator = after.indexOf('|');
+      if (separator <= 0 || separator === after.length - 1) {
+        throw new DomainError('Row cursor is invalid', 'invalid_cursor', 400);
+      }
+      afterCreatedAt = after.slice(0, separator);
+      afterId = after.slice(separator + 1);
+    }
+
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM table_rows
+         WHERE table_id = ? AND run_id = ?
+           AND (
+             ? IS NULL OR created_at > ?
+             OR (created_at = ? AND id > ?)
+           )
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?`,
+      )
+      .all(table.id, run.id, afterCreatedAt, afterCreatedAt, afterCreatedAt, afterId, limit + 1) as Array<
+      Record<string, unknown>
+    >;
+    const page = rows.slice(0, limit).map((row) => {
+      const { data_json: dataJson, provenance_json: provenanceJson, ...stored } = row;
+      return TableRowSchema.parse({
+        ...stored,
+        data: JSON.parse(String(dataJson)) as unknown,
+        provenance: JSON.parse(String(provenanceJson)) as unknown,
+      });
+    });
+    const last = page.at(-1);
+    return {
+      table_id: table.id,
+      run_id: run.id,
+      rows: page,
+      next_cursor: rows.length > limit && last ? `${last.created_at}|${last.id}` : null,
+    };
+  }
+
   private questionForAnswer(workbookId: string, toolCallId: string, input: AnswerQuestionInput) {
     const answer = AnswerQuestionInputSchema.parse(input);
     const row = this.database

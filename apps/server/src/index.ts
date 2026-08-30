@@ -7,6 +7,8 @@ import {
   CreateWorkbookInputSchema,
   HealthResponseSchema,
   IdSchema,
+  TableRowsQuerySchema,
+  TableRowsResponseSchema,
   type JsonObject,
   type JsonValue,
   TaskResponseSchema,
@@ -322,6 +324,30 @@ app.get('/api/v1/workbooks/:workbookId/events', c => {
       await stream.sleep(1000);
     }
   });
+});
+
+app.get('/api/v1/tables/:tableId/rows', c => {
+  const tableId = IdSchema.safeParse(c.req.param('tableId'));
+  const query = TableRowsQuerySchema.safeParse(c.req.query());
+  if (!tableId.success || !query.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: 'invalid_request',
+          message: 'Invalid table row query',
+          path: [],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+  return c.json(
+    TableRowsResponseSchema.parse({
+      data: workbooks.getTableRows(tableId.data, query.data.run_id, query.data.after, query.data.limit),
+    }),
+  );
 });
 
 app.post('/api/v1/workbooks/:workbookId/connect', async c => {

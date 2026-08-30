@@ -15,6 +15,7 @@ import {
   Sha256Schema,
   SlugSchema,
   TaskSchema,
+  TableRowSchema,
   TrueForgeTurnSchema,
   WorkbookSchema,
   WorkbookSnapshotSchema,
@@ -221,6 +222,25 @@ export const WorkbookResponseSchema = z.object({ data: WorkbookSchema }).strict(
 export const TaskResponseSchema = z.object({ data: TaskSchema }).strict();
 export const TrueForgeTurnResponseSchema = z.object({ data: TrueForgeTurnSchema }).strict();
 export const WorkbookSnapshotResponseSchema = z.object({ data: WorkbookSnapshotSchema }).strict();
+export const TableRowsQuerySchema = z
+  .object({
+    run_id: IdSchema,
+    after: z.string().min(1).max(512).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .strict();
+export const TableRowsResponseSchema = z
+  .object({
+    data: z
+      .object({
+        table_id: IdSchema,
+        run_id: IdSchema,
+        rows: z.array(TableRowSchema),
+        next_cursor: z.string().min(1).max(512).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
 export const ApiErrorResponseSchema = z.object({ error: PortableErrorSchema }).strict();
 
 export const AnswerQuestionInputSchema = z
@@ -483,6 +503,8 @@ export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
 export type TrueForgeTurnResponse = z.infer<typeof TrueForgeTurnResponseSchema>;
 export type WorkbookSnapshotResponse = z.infer<typeof WorkbookSnapshotResponseSchema>;
+export type TableRowsQuery = z.infer<typeof TableRowsQuerySchema>;
+export type TableRowsResponse = z.infer<typeof TableRowsResponseSchema>;
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;
 export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
 export type GetWorkbookContextInput = z.infer<
