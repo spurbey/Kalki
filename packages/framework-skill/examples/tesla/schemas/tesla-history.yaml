@@ -1,0 +1,46 @@
+version: 1
+table:
+  slug: tesla-history
+  name: Tesla Daily History
+  kind: source
+  description: Daily TSLA OHLCV records returned by Yahoo Finance.
+  primary_key:
+    - date
+columns:
+  - name: date
+    type: date
+    nullable: false
+    description: Trading date in the exchange timezone.
+  - name: open
+    type: number
+    nullable: false
+    description: Opening price.
+  - name: high
+    type: number
+    nullable: false
+    description: Highest traded price for the day.
+  - name: low
+    type: number
+    nullable: false
+    description: Lowest traded price for the day.
+  - name: close
+    type: number
+    nullable: false
+    description: Closing price.
+  - name: adj_close
+    type: number
+    nullable: true
+    description: Adjusted closing price.
+  - name: volume
+    type: integer
+    nullable: false
+    minimum: 0
+    description: Shares traded.
+  - name: currency
+    type: string
+    nullable: false
+    description: Currency reported by Yahoo.
+  - name: symbol
+    type: string
+    nullable: false
+    description: Source ticker symbol.
