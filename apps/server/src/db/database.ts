@@ -10,7 +10,8 @@ export function openDatabase(path: string): Database.Database {
   database.pragma('foreign_keys = ON');
   database.pragma('busy_timeout = 5000');
   database.pragma('journal_mode = WAL');
-  database.pragma('synchronous = NORMAL');
+  // Keep acknowledged control-plane writes durable while retaining WAL concurrency.
+  database.pragma('synchronous = FULL');
   database.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
 
   const applied = database.prepare('SELECT 1 FROM schema_migrations WHERE version = ?');
