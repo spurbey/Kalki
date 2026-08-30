@@ -11,8 +11,10 @@
     "node": ">=22.14.0"
   },
   "scripts": {
-    "build": "npm run build -w @kalki/contracts && npm run build -w @kalki/server",
-    "typecheck": "npm run build -w @kalki/contracts && npm run typecheck -w @kalki/server",
+    "dev:web": "npm run dev -w @kalki/web",
+    "dev:server": "npm run dev -w @kalki/server",
+    "build": "npm run build -w @kalki/contracts && npm run build -w @kalki/server && npm run build -w @kalki/web",
+    "typecheck": "npm run build -w @kalki/contracts && npm run typecheck -w @kalki/server && npm run typecheck -w @kalki/web",
     "test": "npm run build -w @kalki/contracts && npm run test -w @kalki/contracts && npm run test -w @kalki/server",
     "format:check": "prettier --check .",
     "format": "prettier --write ."
