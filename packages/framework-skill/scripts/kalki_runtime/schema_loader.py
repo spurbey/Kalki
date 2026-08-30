@@ -148,9 +148,14 @@ def _valid_value(value: object, column: dict[str, object]) -> bool:
     if kind == "string":
         valid = isinstance(value, str)
     elif kind == "integer":
-        valid = isinstance(value, int) and not isinstance(value, bool)
+        valid = isinstance(value, int) and not isinstance(value, bool) and abs(value) <= MAX_SAFE_JSON_NUMBER
     elif kind == "number":
-        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        valid = (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and abs(value) <= MAX_SAFE_JSON_NUMBER
+            and math.isfinite(value)
+        )
     elif kind == "boolean":
         valid = isinstance(value, bool)
     elif kind == "date":

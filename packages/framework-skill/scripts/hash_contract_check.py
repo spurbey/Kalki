@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from kalki_runtime.schema_loader import MAX_SAFE_JSON_NUMBER, hash_json, validate_schema
+from kalki_runtime.schema_loader import MAX_SAFE_JSON_NUMBER, hash_json, validate_data, validate_schema
 
 
 def main() -> None:
@@ -42,6 +42,17 @@ def main() -> None:
             except ValueError:
                 continue
             raise SystemExit(f"unsafe schema {bound} was accepted")
+    for kind in ("integer", "number"):
+        checked = {**schema, "columns": [{**schema["columns"][0], "type": kind}]}
+        validate_schema(checked)
+        for value in (MAX_SAFE_JSON_NUMBER, -MAX_SAFE_JSON_NUMBER):
+            validate_data(checked, {"value": value})
+        for value in (MAX_SAFE_JSON_NUMBER + 1, -(MAX_SAFE_JSON_NUMBER + 1)):
+            try:
+                validate_data(checked, {"value": value})
+            except ValueError:
+                continue
+            raise SystemExit(f"unsafe {kind} row value was accepted")
     print("HASH_CONTRACT_OK")
 
 
