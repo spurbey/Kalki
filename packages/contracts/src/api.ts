@@ -31,6 +31,71 @@ const TaskMarkdownSchema = z
 
 const TableCountsSchema = z.record(SlugSchema, z.number().int().nonnegative());
 
+const SchemaColumnNameSchema = z.string().regex(/^[a-z][a-z0-9_]*$/);
+const SchemaColumnSchema = z
+  .object({
+    name: SchemaColumnNameSchema,
+    type: z.enum(['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'url', 'enum']),
+    nullable: z.boolean(),
+    description: z.string().trim().min(1).max(2000),
+    minimum: z.number().finite().optional(),
+    maximum: z.number().finite().optional(),
+    pattern: z.string().min(1).max(1000).optional(),
+    values: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .strict()
+  .superRefine((column, context) => {
+    const numeric = column.type === 'integer' || column.type === 'number';
+    if (column.minimum !== undefined && column.maximum !== undefined && column.minimum > column.maximum) {
+      context.addIssue({ code: 'custom', message: 'minimum cannot exceed maximum', path: ['minimum'] });
+    }
+    if (!numeric && (column.minimum !== undefined || column.maximum !== undefined)) {
+      context.addIssue({ code: 'custom', message: 'numeric bounds require a numeric column', path: ['minimum'] });
+    }
+    if (column.pattern !== undefined && column.type !== 'string') {
+      context.addIssue({ code: 'custom', message: 'pattern is only valid for string columns', path: ['pattern'] });
+    }
+    if (column.type === 'enum' && column.values === undefined) {
+      context.addIssue({ code: 'custom', message: 'enum columns require values', path: ['values'] });
+    }
+    if (column.type !== 'enum' && column.values !== undefined) {
+      context.addIssue({ code: 'custom', message: 'values are only valid for enum columns', path: ['values'] });
+    }
+  });
+
+export const TableSchemaDocumentSchema = z
+  .object({
+    version: z.literal(1),
+    table: z
+      .object({
+        slug: SlugSchema,
+        name: z.string().trim().min(1).max(200),
+        kind: TableKindSchema,
+        description: z.string().trim().min(1).max(2000),
+        primary_key: z.array(SchemaColumnNameSchema).min(1),
+      })
+      .strict(),
+    columns: z.array(SchemaColumnSchema).min(1),
+  })
+  .strict()
+  .superRefine((schema, context) => {
+    const columns = new Map(schema.columns.map(column => [column.name, column]));
+    if (columns.size !== schema.columns.length) {
+      context.addIssue({ code: 'custom', message: 'column names must be unique', path: ['columns'] });
+    }
+    if (new Set(schema.table.primary_key).size !== schema.table.primary_key.length) {
+      context.addIssue({ code: 'custom', message: 'primary key columns must be unique', path: ['table', 'primary_key'] });
+    }
+    schema.table.primary_key.forEach((name, index) => {
+      const column = columns.get(name);
+      if (!column) {
+        context.addIssue({ code: 'custom', message: 'primary key column is not declared', path: ['table', 'primary_key', index] });
+      } else if (column.nullable) {
+        context.addIssue({ code: 'custom', message: 'primary key columns cannot be nullable', path: ['columns'] });
+      }
+    });
+  });
+
 export const CreateWorkbookInputSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
@@ -200,7 +265,7 @@ export const RegisterTaskInputSchema = z
 export const SchemaRegistrationSchema = z
   .object({
     path: WorkspaceRelativePathSchema,
-    schema: JsonObjectSchema,
+    schema: TableSchemaDocumentSchema,
     schema_hash: Sha256Schema,
   })
   .strict();

@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { canonicalJson, TableSchemaDocumentSchema } from '@kalki/contracts';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../db/database.js';
 import { WorkbookService } from './workbookService.js';
 
-const jsonHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const jsonHash = (value: unknown) => createHash('sha256').update(canonicalJson(value)).digest('hex');
 
 describe('workbook persistence', () => {
   it('keeps a workbook and task after reopening SQLite', () => {
@@ -136,7 +137,7 @@ describe('workbook persistence', () => {
       });
       firstDatabase.prepare("UPDATE tasks SET state = 'exploring' WHERE id = ?").run(task.id);
 
-      const historySchema = {
+      const historySchema = TableSchemaDocumentSchema.parse({
         columns: [
           {
             description: 'Trading date.',
@@ -153,8 +154,8 @@ describe('workbook persistence', () => {
           slug: 'tesla-history',
         },
         version: 1,
-      };
-      const topSchema = {
+      });
+      const topSchema = TableSchemaDocumentSchema.parse({
         columns: [
           {
             description: 'Result rank.',
@@ -171,7 +172,7 @@ describe('workbook persistence', () => {
           slug: 'tesla-top-3',
         },
         version: 1,
-      };
+      });
       const schemas = [
         {
           path: 'schemas/tesla-history.yaml',
@@ -209,6 +210,24 @@ describe('workbook persistence', () => {
       };
       firstService.startRun(run);
       firstService.startRun(run);
+
+      const otherTask = firstService.createTask(workbook.id, {
+        slug: 'other-task',
+        title: 'Other task',
+        objective: 'Keep compact context task-scoped.',
+      });
+      const otherTaskMarkdown = '# Other Task\n';
+      const otherTaskHash = createHash('sha256').update(otherTaskMarkdown).digest('hex');
+      firstService.registerTask({
+        task_id: otherTask.id,
+        task_path: 'other-task.md',
+        task_markdown: otherTaskMarkdown,
+        task_hash: otherTaskHash,
+      });
+      firstDatabase.prepare("UPDATE tasks SET state = 'exploring' WHERE id = ?").run(otherTask.id);
+      firstService.registerSchema({ ...registration, task_id: otherTask.id });
+      firstDatabase.prepare("UPDATE tasks SET state = 'building' WHERE id = ?").run(otherTask.id);
+      firstService.startRun({ ...run, run_id: 'run_other_test', task_id: otherTask.id, task_hash: otherTaskHash });
       firstDatabase.close();
 
       const reopenedDatabase = openDatabase(path);
@@ -221,9 +240,11 @@ describe('workbook persistence', () => {
       reopenedDatabase.close();
 
       expect(snapshot.tasks[0]?.state).toBe('testing');
-      expect(snapshot.tables.map((table) => table.slug)).toEqual(['tesla-history', 'tesla-top-3']);
-      expect(snapshot.runs).toHaveLength(1);
-      expect(snapshot.runs[0]?.status).toBe('running');
+      expect(snapshot.tables).toHaveLength(4);
+      expect(context.tables.map((table) => table.slug)).toEqual(['tesla-history', 'tesla-top-3']);
+      expect(snapshot.runs).toHaveLength(2);
+      expect(context.runs).toHaveLength(1);
+      expect(context.runs[0]?.status).toBe('running');
       expect(context.aggregate_schema_hash).toBe(schemaHash);
     } finally {
       rmSync(directory, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import {
+  canonicalJson,
   type CreateTaskInput,
   type CreateWorkbookInput,
   type GetWorkbookContextInput,
@@ -12,11 +13,9 @@ import {
   RegisterTaskDataSchema,
   RegisterTaskInputSchema,
   RunSchema,
-  SlugSchema,
   type StartRunInput,
   StartRunDataSchema,
   StartRunInputSchema,
-  TableKindSchema,
   TableSchema,
   TaskSchema,
   type TrueForgeTurn,
@@ -29,20 +28,6 @@ import {
 import Database from 'better-sqlite3';
 import { createHash, randomUUID } from 'node:crypto';
 import { DomainError } from './errors.js';
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const object = value as Record<string, unknown>;
-    return `{${Object.keys(object)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
-      .join(',')}}`;
-  }
-  const serialized = JSON.stringify(value);
-  if (serialized === undefined) throw new Error('Value is not JSON serializable');
-  return serialized;
-}
 
 function hashJson(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
@@ -253,6 +238,9 @@ export class WorkbookService {
     else if (task.state === 'building') nextExpectedAction = 'start_test_run';
     else if (task.state === 'testing') nextExpectedAction = 'complete_test_run';
 
+    const taskTables = task ? snapshot.tables.filter(table => table.task_id === task.id) : [];
+    const taskRuns = task ? snapshot.runs.filter(run => run.task_id === task.id) : [];
+
     return GetWorkbookContextDataSchema.parse({
       workbook: {
         id: snapshot.workbook.id,
@@ -268,14 +256,14 @@ export class WorkbookService {
             task_hash: task.task_hash,
           }
         : null,
-      tables: snapshot.tables.map((table) => ({
+      tables: taskTables.map((table) => ({
         id: table.id,
         slug: table.slug,
         kind: table.kind,
         schema_hash: table.schema_hash,
       })),
-      aggregate_schema_hash: aggregateSchemaHash(snapshot.tables),
-      runs: snapshot.runs.map((run) => ({
+      aggregate_schema_hash: aggregateSchemaHash(taskTables),
+      runs: taskRuns.map((run) => ({
         id: run.id,
         mode: run.mode,
         status: run.status,
@@ -358,29 +346,14 @@ export class WorkbookService {
 
     const seenSlugs = new Set<string>();
     const tables = registration.schemas.map((item, ordinal) => {
-      const metadata = item.schema.table;
-      if (
-        item.schema.version !== 1 ||
-        !metadata ||
-        typeof metadata !== 'object' ||
-        Array.isArray(metadata) ||
-        !Array.isArray(item.schema.columns) ||
-        item.schema.columns.length === 0
-      ) {
-        throw new DomainError(`Schema '${item.path}' is invalid`, 'schema_validation_failed', 400);
-      }
-
-      const table = metadata as Record<string, unknown>;
-      const slug = SlugSchema.safeParse(table.slug);
-      const kind = TableKindSchema.safeParse(table.kind);
-      const name = typeof table.name === 'string' ? table.name.trim() : '';
-      if (!slug.success || !kind.success || !name || item.path !== `schemas/${slug.data}.yaml`) {
+      const table = item.schema.table;
+      if (item.path !== `schemas/${table.slug}.yaml`) {
         throw new DomainError(`Schema '${item.path}' has invalid table metadata`, 'schema_validation_failed', 400);
       }
-      if (seenSlugs.has(slug.data)) {
-        throw new DomainError(`Table slug '${slug.data}' is duplicated`, 'schema_set_invalid', 400);
+      if (seenSlugs.has(table.slug)) {
+        throw new DomainError(`Table slug '${table.slug}' is duplicated`, 'schema_set_invalid', 400);
       }
-      seenSlugs.add(slug.data);
+      seenSlugs.add(table.slug);
 
       const actualHash = hashJson(item.schema);
       if (actualHash !== item.schema_hash) {
@@ -390,9 +363,9 @@ export class WorkbookService {
       return TableSchema.parse({
         id: `table_${randomUUID()}`,
         task_id: task.id,
-        slug: slug.data,
-        name,
-        kind: kind.data,
+        slug: table.slug,
+        name: table.name,
+        kind: table.kind,
         ordinal,
         schema_path: item.path,
         schema: item.schema,
