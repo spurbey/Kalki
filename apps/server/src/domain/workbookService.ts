@@ -889,6 +889,7 @@ export class WorkbookService {
       const tableSlugs = tables.map((table) => table.slug).sort();
       const counts = manifestCounts as Record<string, unknown>;
       const tableManifests = manifestTables as Record<string, unknown>;
+      const manifestSlugs = Object.keys(tableManifests).sort();
       let sourceRecords = 0;
       let derivedRecords = 0;
 
@@ -910,6 +911,7 @@ export class WorkbookService {
 
       if (
         canonicalJson(sampleSlugs) !== canonicalJson(tableSlugs) ||
+        canonicalJson(manifestSlugs) !== canonicalJson(tableSlugs) ||
         counts.source_records !== sourceRecords ||
         counts.derived_records !== derivedRecords ||
         sourceRecords !== 5
