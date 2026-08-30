@@ -7,6 +7,7 @@ import {
   GeneratedSkillSchema,
   IdSchema,
   JsonObjectSchema,
+  MAX_SAFE_JSON_NUMBER,
   MAX_TABLES_PER_TASK,
   PortableErrorSchema,
   QuestionDecisionSchema,
@@ -38,8 +39,8 @@ const SchemaColumnSchema = z
     type: z.enum(['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'url', 'enum']),
     nullable: z.boolean(),
     description: z.string().trim().min(1).max(2000),
-    minimum: z.number().finite().optional(),
-    maximum: z.number().finite().optional(),
+    minimum: z.number().finite().refine(value => Math.abs(value) <= MAX_SAFE_JSON_NUMBER).optional(),
+    maximum: z.number().finite().refine(value => Math.abs(value) <= MAX_SAFE_JSON_NUMBER).optional(),
     pattern: z.string().min(1).max(1000).optional(),
     values: z.array(z.string().min(1)).min(1).optional(),
   })

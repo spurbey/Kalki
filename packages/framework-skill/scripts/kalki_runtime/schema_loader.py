@@ -105,6 +105,18 @@ def validate_schema(schema: dict[str, object]) -> dict[str, object]:
             raise ValueError(f"column '{name}' has an invalid type or nullable value")
         if not isinstance(column["description"], str) or not column["description"].strip():
             raise ValueError(f"column '{name}' requires a description")
+        for bound in ("minimum", "maximum"):
+            if bound not in column:
+                continue
+            value = column[bound]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"column '{name}' has an invalid {bound}")
+            try:
+                numeric = float(value)
+            except (OverflowError, ValueError):
+                raise ValueError(f"column '{name}' has an invalid {bound}") from None
+            if not math.isfinite(numeric) or abs(numeric) > MAX_SAFE_JSON_NUMBER:
+                raise ValueError(f"column '{name}' has an invalid {bound}")
         if kind == "enum" and not isinstance(column.get("values"), list):
             raise ValueError(f"enum column '{name}' requires values")
         if kind != "enum" and "values" in column:

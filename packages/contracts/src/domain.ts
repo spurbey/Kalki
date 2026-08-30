@@ -7,6 +7,7 @@ export const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 export const TimestampSchema = z.iso.datetime({ offset: true });
 export const MAX_TABLES_PER_TASK = 10;
 export const MAX_TEST_SAMPLE_RECORDS_PER_TABLE = 5;
+export const MAX_SAFE_JSON_NUMBER = Number.MAX_SAFE_INTEGER;
 
 export type JsonObject = { [key: string]: JsonValue };
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
@@ -25,7 +26,7 @@ export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
     z
       .number()
       .finite()
-      .refine(value => Math.abs(value) <= Number.MAX_SAFE_INTEGER, 'number exceeds JavaScript safe range'),
+      .refine(value => Math.abs(value) <= MAX_SAFE_JSON_NUMBER, 'number exceeds JavaScript safe range'),
     z.string(),
     z.array(JsonValueSchema),
     JsonObjectSchema,
