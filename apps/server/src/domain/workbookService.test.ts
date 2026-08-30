@@ -1,5 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { canonicalJson, TableSchemaDocumentSchema } from '@kalki/contracts';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { canonicalHashJson, canonicalJson, TableSchemaDocumentSchema } from '@kalki/contracts';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,9 +8,17 @@ import { openDatabase } from '../db/database.js';
 import { EventStore } from '../events/eventStore.js';
 import { WorkbookService } from './workbookService.js';
 
-const jsonHash = (value: unknown) => createHash('sha256').update(canonicalJson(value)).digest('hex');
+const jsonHash = (value: unknown) => createHash('sha256').update(canonicalHashJson(value)).digest('hex');
 
 describe('workbook persistence', () => {
+  it('uses the shared cross-language JSON hash representation', () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL('../../../../fixtures/hash-contract.json', import.meta.url), 'utf8'),
+    ) as { value: unknown; sha256: string };
+
+    expect(jsonHash(fixture.value)).toBe(fixture.sha256);
+  });
+
   it('keeps a workbook and task after reopening SQLite', () => {
     const directory = mkdtempSync(join(tmpdir(), 'kalki-'));
     const path = join(directory, 'kalki.db');
@@ -537,7 +545,7 @@ describe('workbook persistence', () => {
           task_hash: productionRun.task_hash,
           schema_hash: productionRun.schema_hash,
           pipeline_hash: productionRun.pipeline_hash,
-          counts: { source_records: 5, derived_records: 3, yahoo_timestamp_count: 5 },
+          counts: { source_records: 5, derived_records: 3 },
           tables: {
             'tesla-history': { count: 5 },
             'tesla-top-3': { count: 3 },

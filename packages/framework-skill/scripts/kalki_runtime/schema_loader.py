@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import re
+import struct
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,8 +21,34 @@ def canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True)
 
 
+def _hash_tree(value: object) -> object:
+    if value is None:
+        return {"t": "null"}
+    if isinstance(value, bool):
+        return {"t": "boolean", "v": value}
+    if isinstance(value, (int, float)):
+        try:
+            number = float(value)
+            if not math.isfinite(number):
+                raise ValueError
+            encoded = struct.pack(">d", number).hex()
+        except (OverflowError, ValueError, struct.error) as error:
+            raise TypeError("Value is not JSON serializable") from error
+        return {"t": "number", "v": encoded}
+    if isinstance(value, str):
+        return {"t": "string", "v": value}
+    if isinstance(value, list):
+        return {"t": "array", "v": [_hash_tree(item) for item in value]}
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("Value is not JSON serializable")
+        entries = [[key, _hash_tree(value[key])] for key in sorted(value, key=lambda item: item.encode("utf-16-be"))]
+        return {"t": "object", "v": entries}
+    raise TypeError("Value is not JSON serializable")
+
+
 def hash_json(value: object) -> str:
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json(_hash_tree(value)).encode("utf-8")).hexdigest()
 
 
 def load_yaml(path: Path) -> dict[str, object]:

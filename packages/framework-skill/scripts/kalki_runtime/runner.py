@@ -88,7 +88,7 @@ def run_test(pipeline: LoadedPipeline, run_id: str, limit: int) -> dict[str, obj
         raise ValueError(f"source returned {len(source_records)} records; expected {limit}")
     source_records = _validated_records(source_records, pipeline.schemas[source["table"]])
 
-    run_directory = pipeline.workspace / "runs" / run_id
+    run_directory = workspace_path(pipeline.workspace, f"runs/{run_id}")
     source_path = run_directory / "source.jsonl"
     source_sha256 = write_jsonl(source_path, source_records)
     table_records: dict[str, list[RecordEnvelope]] = {source["table"]: source_records}
@@ -208,7 +208,7 @@ def _read_records(path: Path) -> list[RecordEnvelope]:
 
 
 def _load_production(workspace: Path, run_id: str) -> tuple[LoadedPipeline, dict[str, object], Path, Path]:
-    run_directory = workspace / "runs" / run_id
+    run_directory = workspace_path(workspace, f"runs/{run_id}")
     checkpoint_path = run_directory / "checkpoint.json"
     manifest_path = run_directory / "manifest.json"
     if not checkpoint_path.is_file():
@@ -338,7 +338,6 @@ def _production_manifest(
         "counts": {
             "source_records": source_count,
             "derived_records": derived_count,
-            "yahoo_timestamp_count": source_count,
             "published_this_call": published,
             "published_total": checkpoint.get("published_total", 0),
         },
@@ -356,12 +355,19 @@ def _production_manifest(
 
 
 def start_production(pipeline: LoadedPipeline, run_id: str) -> dict[str, object]:
-    run_directory = pipeline.workspace / "runs" / run_id
+    run_directory = workspace_path(pipeline.workspace, f"runs/{run_id}")
     checkpoint_path = run_directory / "checkpoint.json"
     manifest_path = run_directory / "manifest.json"
     if checkpoint_path.exists():
         existing_pipeline, checkpoint, _, _ = _load_production(pipeline.workspace, run_id)
-        return _production_manifest(existing_pipeline, checkpoint, "start-production")
+        if (
+            existing_pipeline.relative_path != pipeline.relative_path
+            or existing_pipeline.task_hash != pipeline.task_hash
+            or existing_pipeline.schema_hash != pipeline.schema_hash
+            or existing_pipeline.pipeline_hash != pipeline.pipeline_hash
+        ):
+            raise ValueError("existing production checkpoint does not match the requested pipeline")
+        return _production_manifest(pipeline, checkpoint, "start-production")
 
     authorization = _workbook_call(
         "get_production_authorization",
@@ -535,6 +541,12 @@ def next_batch(workspace: Path, run_id: str, limit: int) -> dict[str, object]:
     return manifest
 
 
+def _csv_value(value: object) -> object:
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
 def _csv_artifact(schema: dict[str, object], records: list[RecordEnvelope], run_id: str) -> str:
     columns = [column["name"] for column in schema["columns"]]
     fields = [*columns, "_dedupe_key", "_source_url", "_retrieved_at", "_source_record_id", "_run_id"]
@@ -542,16 +554,15 @@ def _csv_artifact(schema: dict[str, object], records: list[RecordEnvelope], run_
     writer = csv.DictWriter(output, fieldnames=fields, lineterminator="\n")
     writer.writeheader()
     for record in records:
-        writer.writerow(
-            {
-                **record.data,
-                "_dedupe_key": record.dedupe_key,
-                "_source_url": record.provenance.source_url,
-                "_retrieved_at": record.provenance.retrieved_at,
-                "_source_record_id": record.provenance.source_record_id or "",
-                "_run_id": run_id,
-            }
-        )
+        row = {
+            **record.data,
+            "_dedupe_key": record.dedupe_key,
+            "_source_url": record.provenance.source_url,
+            "_retrieved_at": record.provenance.retrieved_at,
+            "_source_record_id": record.provenance.source_record_id or "",
+            "_run_id": run_id,
+        }
+        writer.writerow({field: _csv_value(value) for field, value in row.items()})
     return output.getvalue()
 
 
@@ -576,11 +587,12 @@ def finalize_production(workspace: Path, run_id: str) -> dict[str, object]:
             raise ValueError(f"table is not fully published: {slug}")
         table_records[slug] = records
 
-    artifact_directory = pipeline.workspace / "artifacts" / run_id
+    artifact_directory = workspace_path(pipeline.workspace, f"artifacts/{run_id}")
     artifacts: list[dict[str, object]] = []
     for slug, records in table_records.items():
         relative = f"artifacts/{run_id}/{slug}.csv"
         content = _csv_artifact(pipeline.schemas[slug], records, run_id)
+        scan = _scan_text(content)
         sha256 = write_text(workspace_path(pipeline.workspace, relative), content)
         artifacts.append(
             {
@@ -589,7 +601,7 @@ def finalize_production(workspace: Path, run_id: str) -> dict[str, object]:
                 "sha256": sha256,
                 "size_bytes": len(content.encode("utf-8")),
                 "mime_type": "text/csv",
-                "metadata": {"table_slug": slug, "scan": _scan_text(content)},
+                "metadata": {"table_slug": slug, "scan": scan},
             }
         )
 
@@ -606,6 +618,7 @@ def finalize_production(workspace: Path, run_id: str) -> dict[str, object]:
     }
     lineage_text = f"{canonical_json(lineage)}\n"
     lineage_path = artifact_directory / "lineage.json"
+    lineage_scan = _scan_text(lineage_text)
     artifacts.append(
         {
             "kind": "lineage",
@@ -613,7 +626,7 @@ def finalize_production(workspace: Path, run_id: str) -> dict[str, object]:
             "sha256": write_text(lineage_path, lineage_text),
             "size_bytes": len(lineage_text.encode("utf-8")),
             "mime_type": "application/json",
-            "metadata": {"scan": _scan_text(lineage_text)},
+            "metadata": {"scan": lineage_scan},
         }
     )
     report = "\n".join(
@@ -630,6 +643,7 @@ def finalize_production(workspace: Path, run_id: str) -> dict[str, object]:
         ]
     )
     report_path = artifact_directory / "run-report.md"
+    report_scan = _scan_text(report)
     artifacts.append(
         {
             "kind": "report",
@@ -637,7 +651,7 @@ def finalize_production(workspace: Path, run_id: str) -> dict[str, object]:
             "sha256": write_text(report_path, report),
             "size_bytes": len(report.encode("utf-8")),
             "mime_type": "text/markdown",
-            "metadata": {"scan": _scan_text(report)},
+            "metadata": {"scan": report_scan},
         }
     )
 

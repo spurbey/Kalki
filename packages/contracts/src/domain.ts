@@ -49,6 +49,38 @@ export function canonicalJson(value: unknown): string {
   return serialized;
 }
 
+function hashTree(value: unknown): unknown {
+  if (value === null) return { t: 'null' };
+  if (typeof value === 'boolean') return { t: 'boolean', v: value };
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('Value is not JSON serializable');
+    const buffer = new ArrayBuffer(8);
+    new DataView(buffer).setFloat64(0, value, false);
+    const bytes = Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, '0')).join('');
+    return { t: 'number', v: bytes };
+  }
+  if (typeof value === 'string') return { t: 'string', v: value };
+  if (Array.isArray(value)) return { t: 'array', v: value.map(hashTree) };
+  if (value && typeof value === 'object') {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError('Value is not JSON serializable');
+    }
+    const object = value as Record<string, unknown>;
+    return {
+      t: 'object',
+      v: Object.keys(object)
+        .sort()
+        .map(key => [key, hashTree(object[key])]),
+    };
+  }
+  throw new TypeError('Value is not JSON serializable');
+}
+
+export function canonicalHashJson(value: unknown): string {
+  return canonicalJson(hashTree(value));
+}
+
 export const WorkspaceRelativePathSchema = z
   .string()
   .min(1)

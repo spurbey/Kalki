@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +15,12 @@ def _workspace(value: str | None) -> Path:
 
 def _print(value: dict[str, object]) -> None:
     print(json.dumps(value, separators=(",", ":"), sort_keys=True))
+
+
+def _run_id(value: object) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value) is None:
+        raise ValueError("run id must start with a letter or number and contain only letters, numbers, '_' or '-'")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,13 +54,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         workspace = _workspace(args.workspace)
-        if "/" in getattr(args, "run_id", "") or "\\" in getattr(args, "run_id", ""):
-            raise ValueError("run id must not contain path separators")
         if args.command == "next-batch":
-            _print(next_batch(workspace, args.run_id, args.limit))
+            _print(next_batch(workspace, _run_id(args.run_id), args.limit))
             return 0
         if args.command == "finalize":
-            _print(finalize_production(workspace, args.run_id))
+            _print(finalize_production(workspace, _run_id(args.run_id)))
             return 0
 
         pipeline = load_pipeline(workspace, args.pipeline)
@@ -73,12 +78,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "start-production":
-            _print(start_production(pipeline, args.run_id))
+            _print(start_production(pipeline, _run_id(args.run_id)))
             return 0
 
-        run_id = args.run_id or os.environ.get("KALKI_RUN_ID")
-        if not run_id or "/" in run_id or "\\" in run_id:
-            raise ValueError("test requires a safe --run-id or KALKI_RUN_ID")
+        run_id = _run_id(args.run_id or os.environ.get("KALKI_RUN_ID"))
         configured_limit = pipeline.data["execution"]["test_limit"]
         limit = args.limit if args.limit is not None else configured_limit
         if not 1 <= limit <= configured_limit:

@@ -4,6 +4,7 @@ import {
   AgentQuestionSchema,
   ArtifactSchema,
   canTransitionTask,
+  canonicalHashJson,
   canonicalJson,
   type CompleteRunInput,
   CompleteRunInputSchema,
@@ -50,7 +51,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DomainError } from './errors.js';
 
 function hashJson(value: unknown): string {
-  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
+  return createHash('sha256').update(canonicalHashJson(value), 'utf8').digest('hex');
 }
 
 function aggregateSchemaHash(tables: Array<{ schema_path: string; schema_hash: string }>): string | null {
@@ -1305,16 +1306,15 @@ export class WorkbookService {
           const code = authorization.reason === 'approval_hash_mismatch' ? 'approval_hash_mismatch' : 'production_not_authorized';
           throw new DomainError('Production authorization is not current', code, 409);
         }
-        const incompleteTable = this.database
+        const sourceRows = this.database
           .prepare(
-            `SELECT tables.slug FROM tables
+            `SELECT count(table_rows.id) AS count FROM tables
              LEFT JOIN table_rows ON table_rows.table_id = tables.id AND table_rows.run_id = ?
-             WHERE tables.task_id = ?
-             GROUP BY tables.id HAVING count(table_rows.id) = 0 LIMIT 1`,
+             WHERE tables.task_id = ? AND tables.kind = 'source'`,
           )
           .get(run.id, task.id);
-        if (incompleteTable) {
-          throw new DomainError('Formal tables are not fully published', 'run_completion_incomplete', 409);
+        if (!sourceRows || Number((sourceRows as { count: number }).count) === 0) {
+          throw new DomainError('At least one source row must be published', 'run_completion_incomplete', 409);
         }
       }
 
@@ -1450,7 +1450,6 @@ export class WorkbookService {
         });
         const manifestCounts = requested.manifest.counts;
         const manifestTables = requested.manifest.tables;
-        const topThreeCount = tableCounts['tesla-top-3'];
         if (
           !authorization.authorized ||
           run.status !== 'finalizing' ||
@@ -1475,7 +1474,6 @@ export class WorkbookService {
           canonicalJson(requested.table_counts) !== canonicalJson(tableCounts) ||
           run.published_row_count !== totalRecords ||
           sourceRecords === 0 ||
-          (topThreeCount !== undefined && topThreeCount !== 3) ||
           artifactRows.length === 0
         ) {
           throw new DomainError('Production result is incomplete or stale', 'run_completion_incomplete', 409);
@@ -1486,7 +1484,6 @@ export class WorkbookService {
         if (
           counts.source_records !== sourceRecords ||
           counts.derived_records !== derivedRecords ||
-          counts.yahoo_timestamp_count !== sourceRecords ||
           canonicalJson(Object.keys(tableManifests).sort()) !== canonicalJson(Object.keys(tableCounts).sort()) ||
           countRows.some((row) => {
             const item = tableManifests[row.slug];
