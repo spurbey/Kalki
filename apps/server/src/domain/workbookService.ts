@@ -1,5 +1,10 @@
 import {
+  AnswerQuestionInputSchema,
+  AgentQuestionSchema,
+  canTransitionTask,
   canonicalJson,
+  type AgentQuestion,
+  type AnswerQuestionInput,
   type CreateTaskInput,
   type CreateWorkbookInput,
   type GetWorkbookContextInput,
@@ -13,6 +18,7 @@ import {
   RegisterTaskDataSchema,
   RegisterTaskInputSchema,
   RunSchema,
+  type Task,
   type StartRunInput,
   StartRunDataSchema,
   StartRunInputSchema,
@@ -41,6 +47,18 @@ function aggregateSchemaHash(tables: Array<{ schema_path: string; schema_hash: s
       .sort((left, right) => left.path.localeCompare(right.path)),
   );
 }
+
+type PendingQuestionRegistration = {
+  taskId: string | null;
+  runId?: string | null;
+  gateKind: AgentQuestion['gate_kind'];
+  questionTurnId: string;
+  questionEventId: string;
+  toolCallId: string;
+  threadId: string;
+  questionText: string;
+  options: string[];
+};
 
 export class WorkbookService {
   constructor(private readonly database: Database.Database) {}
@@ -211,6 +229,211 @@ export class WorkbookService {
 
     const row = this.database.prepare('SELECT * FROM trueforge_turns WHERE id = ?').get(turn.id);
     return this.parseTrueForgeTurn(row);
+  }
+
+  savePendingQuestion(workbookId: string, input: PendingQuestionRegistration) {
+    const workbook = this.getWorkbook(workbookId);
+    if (input.taskId) {
+      const task = this.database
+        .prepare('SELECT workbook_id FROM tasks WHERE id = ?')
+        .get(input.taskId) as { workbook_id: string } | undefined;
+      if (!task || task.workbook_id !== workbook.id) {
+        throw new DomainError('Question task does not belong to this workbook', 'question_task_mismatch', 409);
+      }
+    }
+
+    const existingRow = this.database
+      .prepare('SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?')
+      .get(workbook.id, input.toolCallId);
+    if (existingRow) {
+      const existing = this.parseAgentQuestion(existingRow);
+      if (
+        existing.question_event_id !== input.questionEventId ||
+        existing.question_turn_id !== input.questionTurnId
+      ) {
+        throw new DomainError('Question tool call is already linked to another action', 'question_identity_conflict', 409);
+      }
+      return existing;
+    }
+
+    const timestamp = new Date().toISOString();
+    const question = AgentQuestionSchema.parse({
+      id: `question_${randomUUID()}`,
+      workbook_id: workbook.id,
+      task_id: input.taskId,
+      run_id: input.runId ?? null,
+      gate_kind: input.gateKind,
+      question_turn_id: input.questionTurnId,
+      question_event_id: input.questionEventId,
+      tool_call_id: input.toolCallId,
+      thread_id: input.threadId,
+      question_text: input.questionText,
+      options: input.options,
+      status: 'pending',
+      answer_text: null,
+      decision: null,
+      answer_turn_id: null,
+      created_at: timestamp,
+      answered_at: null,
+    });
+
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO agent_questions(
+             id, workbook_id, task_id, run_id, gate_kind, question_turn_id, question_event_id,
+             tool_call_id, thread_id, question_text, options_json, status, answer_text, decision,
+             answer_turn_id, created_at, answered_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          question.id,
+          question.workbook_id,
+          question.task_id,
+          question.run_id,
+          question.gate_kind,
+          question.question_turn_id,
+          question.question_event_id,
+          question.tool_call_id,
+          question.thread_id,
+          question.question_text,
+          JSON.stringify(question.options),
+          question.status,
+          question.answer_text,
+          question.decision,
+          question.answer_turn_id,
+          question.created_at,
+          question.answered_at,
+        );
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(
+          workbook.id,
+          'agent.question_pending',
+          JSON.stringify({
+            question_id: question.id,
+            task_id: question.task_id,
+            gate_kind: question.gate_kind,
+            question_event_id: question.question_event_id,
+          }),
+          timestamp,
+        );
+    })();
+
+    return question;
+  }
+
+  getPendingQuestion(workbookId: string): AgentQuestion | null {
+    this.getWorkbook(workbookId);
+    const row = this.database
+      .prepare(
+        `SELECT * FROM agent_questions
+         WHERE workbook_id = ? AND status IN ('pending', 'submitting')
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(workbookId);
+    return row ? this.parseAgentQuestion(row) : null;
+  }
+
+  markQuestionSubmitting(workbookId: string, toolCallId: string, input: AnswerQuestionInput) {
+    const question = this.questionForAnswer(workbookId, toolCallId, input);
+    if (question.status === 'submitting') {
+      throw new DomainError('Question answer is already being submitted', 'question_submission_in_progress', 409, true);
+    }
+    if (question.status !== 'pending') {
+      throw new DomainError('Question is no longer pending', 'question_not_pending', 409);
+    }
+
+    this.database
+      .prepare('UPDATE agent_questions SET status = ? WHERE id = ? AND status = ?')
+      .run('submitting', question.id, 'pending');
+    return this.getQuestion(question.id);
+  }
+
+  resetQuestionSubmission(workbookId: string, toolCallId: string) {
+    const question = this.database
+      .prepare('SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?')
+      .get(workbookId, toolCallId);
+    if (question) {
+      this.database
+        .prepare("UPDATE agent_questions SET status = 'pending' WHERE id = ? AND status = 'submitting'")
+        .run((question as { id: string }).id);
+    }
+  }
+
+  completeQuestion(
+    workbookId: string,
+    toolCallId: string,
+    input: AnswerQuestionInput,
+    answerTurnId: string,
+  ) {
+    const question = this.questionForAnswer(workbookId, toolCallId, input);
+    if (question.status === 'answered') {
+      if (question.answer_turn_id === answerTurnId && question.answer_text === input.answer) {
+        return question;
+      }
+      throw new DomainError('Question has already been answered', 'question_already_answered', 409);
+    }
+    if (question.status !== 'submitting') {
+      throw new DomainError('Question is not being submitted', 'question_not_submitting', 409);
+    }
+
+    const task = question.task_id
+      ? TaskSchema.parse(this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(question.task_id))
+      : null;
+    let nextState: Task['state'] | null = null;
+    if (question.gate_kind === 'task_review') {
+      if (!task) throw new DomainError('Task review question is missing its task', 'question_task_missing', 409);
+      if (input.decision === 'approve') nextState = 'exploring';
+      else if (input.decision === 'revise') nextState = 'aligning';
+      else if (input.decision === 'cancel') nextState = 'cancelled';
+      else throw new DomainError('Task review requires approve, revise, or cancel', 'invalid_question_decision', 400);
+    } else if (question.gate_kind === 'schema_review') {
+      if (!task) throw new DomainError('Schema review question is missing its task', 'question_task_missing', 409);
+      if (input.decision === 'approve') nextState = 'building';
+      else if (input.decision === 'revise') nextState = 'exploring';
+      else if (input.decision === 'cancel') nextState = 'cancelled';
+      else throw new DomainError('Schema review requires approve, revise, or cancel', 'invalid_question_decision', 400);
+    } else {
+      throw new DomainError('This question gate is not implemented in the current slice', 'unsupported_question_gate', 409);
+    }
+
+    if (task && nextState && !canTransitionTask(task.state, nextState)) {
+      throw new DomainError(`Task cannot move from '${task.state}' to '${nextState}'`, 'invalid_task_state', 409);
+    }
+
+    const timestamp = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE agent_questions
+           SET status = 'answered', answer_text = ?, decision = ?, answer_turn_id = ?, answered_at = ?
+           WHERE id = ? AND status = 'submitting'`,
+        )
+        .run(input.answer, input.decision, answerTurnId, timestamp, question.id);
+      if (task && nextState) {
+        this.database
+          .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
+          .run(nextState, timestamp, task.id);
+      }
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(
+          workbookId,
+          'agent.question_answered',
+          JSON.stringify({
+            question_id: question.id,
+            task_id: question.task_id,
+            gate_kind: question.gate_kind,
+            decision: input.decision,
+            answer_turn_id: answerTurnId,
+            next_task_state: nextState,
+          }),
+          timestamp,
+        );
+    })();
+
+    return this.getQuestion(question.id);
   }
 
   getWorkbookContext(input: GetWorkbookContextInput) {
@@ -591,17 +814,51 @@ export class WorkbookService {
          WHERE tasks.workbook_id = ? ORDER BY runs.created_at`,
       )
       .all(workbookId);
+    const pendingQuestionRow = this.database
+      .prepare(
+        `SELECT * FROM agent_questions
+         WHERE workbook_id = ? AND status IN ('pending', 'submitting')
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(workbookId);
 
     return WorkbookSnapshotSchema.parse({
       workbook: this.getWorkbook(workbookId),
       tasks: taskRows.map(row => TaskSchema.parse(row)),
       tables: tableRows.map((row) => this.parseTable(row)),
       runs: runRows.map((row) => this.parseRun(row)),
-      pending_question: null,
+      pending_question: pendingQuestionRow ? this.parseAgentQuestion(pendingQuestionRow) : null,
       artifacts: [],
       generated_skills: [],
       table_counts: {},
     });
+  }
+
+  private questionForAnswer(workbookId: string, toolCallId: string, input: AnswerQuestionInput) {
+    const answer = AnswerQuestionInputSchema.parse(input);
+    const row = this.database
+      .prepare('SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?')
+      .get(workbookId, toolCallId);
+    if (!row) {
+      throw new DomainError('The requested question is not pending', 'question_not_found', 404);
+    }
+    const question = this.parseAgentQuestion(row);
+    if (
+      question.question_event_id !== answer.question_event_id ||
+      question.question_turn_id !== answer.question_turn_id ||
+      question.thread_id !== answer.thread_id ||
+      question.gate_kind !== answer.gate_kind ||
+      (answer.related_run_id !== undefined && question.run_id !== answer.related_run_id)
+    ) {
+      throw new DomainError('Question identifiers do not match the pending action', 'question_identity_mismatch', 409);
+    }
+    return question;
+  }
+
+  private getQuestion(id: string): AgentQuestion {
+    const row = this.database.prepare('SELECT * FROM agent_questions WHERE id = ?').get(id);
+    if (!row) throw new Error('Question was not persisted');
+    return this.parseAgentQuestion(row);
   }
 
   private parseTrueForgeTurn(row: unknown) {
@@ -617,6 +874,15 @@ export class WorkbookService {
       started_at: stored.started_at,
       finished_at: stored.finished_at,
       updated_at: stored.updated_at,
+    });
+  }
+
+  private parseAgentQuestion(row: unknown) {
+    if (!row || typeof row !== 'object') throw new Error('Question was not persisted');
+    const { options_json: optionsJson, ...stored } = row as Record<string, unknown>;
+    return AgentQuestionSchema.parse({
+      ...stored,
+      options: JSON.parse(String(optionsJson)) as unknown,
     });
   }
 

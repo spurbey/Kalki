@@ -104,4 +104,37 @@ export const migrations = [
       CREATE INDEX idx_runs_task_created ON runs(task_id, created_at);
     `,
   },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE agent_questions (
+        id TEXT PRIMARY KEY,
+        workbook_id TEXT NOT NULL REFERENCES workbooks(id),
+        task_id TEXT REFERENCES tasks(id),
+        run_id TEXT REFERENCES runs(id),
+        gate_kind TEXT NOT NULL CHECK (
+          gate_kind IN ('clarification', 'task_review', 'schema_review', 'production_review', 'skill_promotion_review')
+        ),
+        question_turn_id TEXT NOT NULL REFERENCES trueforge_turns(id),
+        question_event_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        question_text TEXT NOT NULL,
+        options_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+          status IN ('pending', 'submitting', 'answered', 'submission_unknown', 'invalidated')
+        ),
+        answer_text TEXT,
+        decision TEXT CHECK (decision IN ('approve', 'revise', 'skip', 'cancel', 'free_text')),
+        answer_turn_id TEXT REFERENCES trueforge_turns(id),
+        created_at TEXT NOT NULL,
+        answered_at TEXT,
+        UNIQUE(workbook_id, tool_call_id),
+        UNIQUE(workbook_id, question_event_id)
+      );
+
+      CREATE INDEX idx_agent_questions_workbook_status
+        ON agent_questions(workbook_id, status, created_at);
+    `,
+  },
 ] as const;
