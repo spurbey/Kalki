@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   AnswerQuestionInputSchema,
   CompleteRunInputSchema,
+  BrowserNavigateInputSchema,
+  PlaywrightToolResultSchema,
   PublishBatchInputSchema,
   RegisterSchemaInputSchema,
   StartRunInputSchema,
@@ -86,6 +88,31 @@ describe('workbook MCP surface', () => {
       { name: 'complete_run', annotations: undefined },
       { name: 'promote_skill', annotations: undefined },
     ]);
+  });
+});
+
+describe('browser boundary', () => {
+  it('bounds navigation URLs and validates MCP tool results', () => {
+    expect(
+      BrowserNavigateInputSchema.safeParse({
+        url: `https://example.com/${'a'.repeat(4000)}`,
+      }).success,
+    ).toBe(false);
+    expect(
+      PlaywrightToolResultSchema.safeParse({
+        content: [{ type: 'text', text: 'ok' }],
+      }).success,
+    ).toBe(true);
+    expect(
+      PlaywrightToolResultSchema.safeParse({ content: [{ type: 'text' }] })
+        .success,
+    ).toBe(false);
+    expect(
+      PlaywrightToolResultSchema.safeParse({
+        content: [{ type: 'image', text: 'not image data' }],
+      }).success,
+    ).toBe(false);
+    expect(PlaywrightToolResultSchema.safeParse({ content: 'ok' }).success).toBe(false);
   });
 });
 

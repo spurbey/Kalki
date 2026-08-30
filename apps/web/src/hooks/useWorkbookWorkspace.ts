@@ -20,7 +20,7 @@ export function useWorkbookWorkspace() {
   const [streamStatus, setStreamStatus] =
     useState<api.StreamStatus>("connecting");
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<WorkspaceView>("task");
+  const [activeView, setActiveView] = useState<WorkspaceView>("research");
   const [mobilePane, setMobilePane] = useState<"agent" | "workbook">("agent");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(Boolean(workbookId));
@@ -102,7 +102,7 @@ export function useWorkbookWorkspace() {
       const workbook = await api.createWorkbook({ title });
       localStorage.setItem(WORKBOOK_STORAGE_KEY, workbook.id);
       setWorkbookId(workbook.id);
-      setActiveView("task");
+      setActiveView("research");
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Workbook creation failed",
@@ -135,11 +135,16 @@ export function useWorkbookWorkspace() {
     setError("");
     try {
       if (!snapshot.tasks.length) {
-        await api.createTask(workbookId, {
+        const task = await api.createTask(workbookId, {
           slug: taskSlug(snapshot.workbook.title),
           title: snapshot.workbook.title,
           objective: message,
         });
+        setSnapshot((current) =>
+          current?.workbook.id === workbookId
+            ? { ...current, tasks: [task] }
+            : current,
+        );
       }
       const turn = await api.createTurn(workbookId, { input: message });
       setActiveTurnId(turn.status === "running" ? turn.id : null);

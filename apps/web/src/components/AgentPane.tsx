@@ -30,6 +30,7 @@ import type { StreamStatus } from "../api.js";
 import { activityFromEvents } from "../lib/activity.js";
 import { formatTime, label } from "../lib/format.js";
 import { EmptyState } from "./common.js";
+import { WorkflowProgress } from "./WorkflowProgress.js";
 
 function QuestionPrompt({
   question,
@@ -102,6 +103,7 @@ function QuestionPrompt({
       ) : null}
       {allowsCustom ? (
         <textarea
+          name="answer"
           rows={2}
           value={custom}
           onChange={(event) => {
@@ -197,6 +199,8 @@ export function AgentPane({
         </span>
       </header>
 
+      <WorkflowProgress task={snapshot.tasks[0] ?? null} />
+
       <div className="activity-feed">
         {!connected ? (
           <div className="connect-state">
@@ -261,6 +265,7 @@ export function AgentPane({
 
       <div className="composer">
         <textarea
+          name="message"
           rows={2}
           value={message}
           onChange={(event) => setMessage(event.target.value)}

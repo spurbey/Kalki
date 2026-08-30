@@ -13,6 +13,8 @@
     "src/domain/workbookService.test.ts",
     "src/domain/workbookService.ts",
     "src/events/eventStore.ts",
+    "src/browser/playwrightClient.ts",
+    "src/browser/routes.ts",
     "src/index.ts",
     "src/mcp/workbookServer.ts",
     "src/trueforge/sessionClient.ts"
