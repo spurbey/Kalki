@@ -103,6 +103,15 @@ describe('browser boundary', () => {
         content: [{ type: 'text', text: 'ok' }],
       }).success,
     ).toBe(true);
+    expect(
+      PlaywrightToolResultSchema.safeParse({ content: [{ type: 'text' }] })
+        .success,
+    ).toBe(false);
+    expect(
+      PlaywrightToolResultSchema.safeParse({
+        content: [{ type: 'image', text: 'not image data' }],
+      }).success,
+    ).toBe(false);
     expect(PlaywrightToolResultSchema.safeParse({ content: 'ok' }).success).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
   AgentQuestionSchema,
@@ -245,22 +246,7 @@ export const BrowserStatusResponseSchema = z.object({ data: BrowserStatusSchema 
 
 export const BrowserNavigateInputSchema = z.object({ url: BrowserUrlSchema }).strict();
 
-export const PlaywrightToolResultSchema = z
-  .object({
-    content: z
-      .array(
-        z
-          .object({
-            type: z.string(),
-            text: z.string().optional(),
-            data: z.string().optional(),
-          })
-          .passthrough(),
-      )
-      .optional(),
-    isError: z.boolean().optional(),
-  })
-  .passthrough();
+export const PlaywrightToolResultSchema = CallToolResultSchema;
 
 export type PlaywrightToolResult = z.infer<typeof PlaywrightToolResultSchema>;
 

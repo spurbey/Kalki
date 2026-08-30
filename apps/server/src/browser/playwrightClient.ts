@@ -27,18 +27,15 @@ function resultText(result: PlaywrightToolResult): string {
   const content = result.content;
   if (!Array.isArray(content)) return "";
   return content
-    .filter((item) => item.type === "text" && typeof item.text === "string")
-    .map((item) => item.text)
+    .flatMap((item) => (item.type === "text" ? [item.text] : []))
     .join("\n");
 }
 
 function resultImage(result: PlaywrightToolResult): Buffer | null {
   const content = result.content;
   if (!Array.isArray(content)) return null;
-  const image = content.find(
-    (item) => item.type === "image" && typeof item.data === "string",
-  );
-  return image?.data ? Buffer.from(image.data, "base64") : null;
+  const image = content.find((item) => item.type === "image");
+  return image ? Buffer.from(image.data, "base64") : null;
 }
 
 function parseTabs(text: string): BrowserTab[] {
