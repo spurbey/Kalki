@@ -4,6 +4,7 @@ import {
   CreateTaskInputSchema,
   CreateWorkbookInputSchema,
   HealthResponseSchema,
+  IdSchema,
   TaskResponseSchema,
   WorkbookResponseSchema,
   WorkbookSnapshotResponseSchema,
@@ -80,11 +81,41 @@ app.post('/api/v1/workbooks', async c => {
   return c.json(WorkbookResponseSchema.parse({ data: workbooks.createWorkbook(input.data) }), 201);
 });
 
-app.get('/api/v1/workbooks/:workbookId', c =>
-  c.json(WorkbookSnapshotResponseSchema.parse({ data: workbooks.getSnapshot(c.req.param('workbookId')) })),
-);
+app.get('/api/v1/workbooks/:workbookId', c => {
+  const workbookId = IdSchema.safeParse(c.req.param('workbookId'));
+  if (!workbookId.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: 'invalid_request',
+          message: 'Invalid workbook id',
+          path: ['workbookId'],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+  return c.json(WorkbookSnapshotResponseSchema.parse({ data: workbooks.getSnapshot(workbookId.data) }));
+});
 
 app.post('/api/v1/workbooks/:workbookId/tasks', async c => {
+  const workbookId = IdSchema.safeParse(c.req.param('workbookId'));
+  if (!workbookId.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: 'invalid_request',
+          message: 'Invalid workbook id',
+          path: ['workbookId'],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
   const input = CreateTaskInputSchema.safeParse(await c.req.json());
   if (!input.success) {
     return c.json(
@@ -101,7 +132,7 @@ app.post('/api/v1/workbooks/:workbookId/tasks', async c => {
     );
   }
   return c.json(
-    TaskResponseSchema.parse({ data: workbooks.createTask(c.req.param('workbookId'), input.data) }),
+    TaskResponseSchema.parse({ data: workbooks.createTask(workbookId.data, input.data) }),
     201,
   );
 });
