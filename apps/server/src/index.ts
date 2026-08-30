@@ -16,6 +16,7 @@ import { config } from './config.js';
 import { openDatabase } from './db/database.js';
 import { DomainError } from './domain/errors.js';
 import { WorkbookService } from './domain/workbookService.js';
+import { startWorkbookMcp } from './mcp/workbookServer.js';
 import { TrueForgeClient } from './trueforge/sessionClient.js';
 
 const database = openDatabase(config.databasePath);
@@ -29,6 +30,8 @@ const trueForge = new TrueForgeClient({
 const app = new Hono();
 const connectingWorkbooks = new Set<string>();
 const turningWorkbooks = new Set<string>();
+
+startWorkbookMcp(workbooks);
 
 function trueForgeUnavailable(error: unknown) {
   console.error(error);

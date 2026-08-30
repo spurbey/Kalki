@@ -13,6 +13,7 @@
     "src/domain/workbookService.test.ts",
     "src/domain/workbookService.ts",
     "src/index.ts",
+    "src/mcp/workbookServer.ts",
     "src/trueforge/sessionClient.ts"
   ]
 }
