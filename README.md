@@ -27,6 +27,6 @@ Implementation is in progress and will land through reviewed pull requests. Shar
 
 ## Qodo Code Review Evidence
 
-Representative reviewed PR: pending the first substantive Qodo-reviewed merge.
+Representative review PR: [#2 Add shared workflow contracts](https://github.com/spurbey/Kalki/pull/2) (review in progress).
 
 This section will link that public pull request and record what Qodo surfaced, what changed, and any finding intentionally dismissed before hackathon submission.
