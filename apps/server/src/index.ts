@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server';
 import {
   ApiErrorResponseSchema,
+  AnswerQuestionInputSchema,
   CreateTaskInputSchema,
   CreateTurnInputSchema,
   CreateWorkbookInputSchema,
@@ -17,7 +18,8 @@ import { openDatabase } from './db/database.js';
 import { DomainError } from './domain/errors.js';
 import { WorkbookService } from './domain/workbookService.js';
 import { startWorkbookMcp } from './mcp/workbookServer.js';
-import { TrueForgeClient } from './trueforge/sessionClient.js';
+import { TrueForgeClient, type PendingTrueForgeQuestion } from './trueforge/sessionClient.js';
+import type { TrueForgeTurnInput } from '@kalki/contracts';
 
 const database = openDatabase(config.databasePath);
 const workbooks = new WorkbookService(database);
@@ -36,6 +38,67 @@ startWorkbookMcp(workbooks);
 function trueForgeUnavailable(error: unknown) {
   console.error(error);
   return new DomainError('TrueForge is unavailable or not fully configured', 'trueforge_unavailable', 503, true);
+}
+
+function gateKindForTaskState(state: string): PendingQuestionRegistration['gateKind'] {
+  if (state === 'awaiting_task_confirmation') return 'task_review';
+  if (state === 'awaiting_schema_review') return 'schema_review';
+  if (state === 'awaiting_production_confirmation') return 'production_review';
+  return 'clarification';
+}
+
+type PendingQuestionRegistration = {
+  taskId: string | null;
+  runId: string | null;
+  gateKind: 'clarification' | 'task_review' | 'schema_review' | 'production_review' | 'skill_promotion_review';
+  questionTurnId: string;
+  questionEventId: string;
+  toolCallId: string;
+  threadId: string;
+  questionText: string;
+  options: string[];
+};
+
+async function persistPendingQuestion(workbookId: string, turn: TrueForgeTurnInput) {
+  const question: PendingTrueForgeQuestion | null = await trueForge.getPendingQuestion(
+    workbooks.getWorkbook(workbookId).trueforge_session_id!,
+    turn,
+  );
+  if (!question) return null;
+
+  const snapshot = workbooks.getSnapshot(workbookId);
+  const task =
+    snapshot.tasks.find((candidate) =>
+      [
+        'awaiting_task_confirmation',
+        'awaiting_schema_review',
+        'awaiting_production_confirmation',
+      ].includes(candidate.state),
+    ) ?? (snapshot.tasks.length === 1 ? snapshot.tasks[0] : null);
+  const run = snapshot.runs.find((candidate) => candidate.status === 'awaiting_confirmation') ?? null;
+
+  return workbooks.savePendingQuestion(workbookId, {
+    taskId: task?.id ?? null,
+    runId: run?.id ?? null,
+    gateKind: gateKindForTaskState(task?.state ?? 'aligning'),
+    questionTurnId: question.questionTurnId,
+    questionEventId: question.questionEventId,
+    toolCallId: question.toolCallId,
+    threadId: question.threadId,
+    questionText: question.question,
+    options: question.options,
+  });
+}
+
+async function refreshCurrentTurn(workbookId: string) {
+  const workbook = workbooks.getWorkbook(workbookId);
+  if (!workbook.trueforge_session_id) return;
+  const current = workbooks.getCurrentTrueForgeTurn(workbookId);
+  if (!current || (current.status !== 'running' && current.required_actions.length === 0)) return;
+
+  const upstream = await trueForge.getTurn(workbook.trueforge_session_id, current.id);
+  workbooks.saveTrueForgeTurn(workbookId, upstream);
+  await persistPendingQuestion(workbookId, upstream);
 }
 
 app.onError((error, c) => {
@@ -111,7 +174,7 @@ app.post('/api/v1/workbooks', async c => {
   return c.json(WorkbookResponseSchema.parse({ data: workbooks.createWorkbook(input.data) }), 201);
 });
 
-app.get('/api/v1/workbooks/:workbookId', c => {
+app.get('/api/v1/workbooks/:workbookId', async c => {
   const workbookId = IdSchema.safeParse(c.req.param('workbookId'));
   if (!workbookId.success) {
     return c.json(
@@ -126,6 +189,11 @@ app.get('/api/v1/workbooks/:workbookId', c => {
       }),
       400,
     );
+  }
+  try {
+    await refreshCurrentTurn(workbookId.data);
+  } catch (error) {
+    console.error(error);
   }
   return c.json(WorkbookSnapshotResponseSchema.parse({ data: workbooks.getSnapshot(workbookId.data) }));
 });
@@ -267,10 +335,9 @@ app.post('/api/v1/workbooks/:workbookId/turns', async c => {
     let current = workbooks.getCurrentTrueForgeTurn(workbook.id);
     if (current?.status === 'running') {
       try {
-        current = workbooks.saveTrueForgeTurn(
-          workbook.id,
-          await trueForge.getTurn(workbook.trueforge_session_id, current.id),
-        );
+        const refreshed = await trueForge.getTurn(workbook.trueforge_session_id, current.id);
+        current = workbooks.saveTrueForgeTurn(workbook.id, refreshed);
+        await persistPendingQuestion(workbook.id, refreshed);
       } catch (error) {
         throw trueForgeUnavailable(error);
       }
@@ -287,9 +354,11 @@ app.post('/api/v1/workbooks/:workbookId/turns', async c => {
     }
 
     try {
+      const savedTurn = workbooks.saveTrueForgeTurn(workbook.id, turn);
+      await persistPendingQuestion(workbook.id, turn);
       return c.json(
         TrueForgeTurnResponseSchema.parse({
-          data: workbooks.saveTrueForgeTurn(workbook.id, turn),
+          data: savedTurn,
         }),
       );
     } catch (error) {
@@ -303,6 +372,79 @@ app.post('/api/v1/workbooks/:workbookId/turns', async c => {
   } finally {
     turningWorkbooks.delete(workbookId.data);
   }
+});
+
+app.post('/api/v1/workbooks/:workbookId/questions/:toolCallId/answer', async c => {
+  const workbookId = IdSchema.safeParse(c.req.param('workbookId'));
+  const toolCallId = IdSchema.safeParse(c.req.param('toolCallId'));
+  if (!workbookId.success || !toolCallId.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: 'invalid_request',
+          message: 'Invalid workbook or tool call id',
+          path: [],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+
+  const input = AnswerQuestionInputSchema.safeParse(await c.req.json());
+  if (!input.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: 'invalid_request',
+          message: 'Invalid question answer',
+          path: [],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+
+  const workbook = workbooks.getWorkbook(workbookId.data);
+  if (!workbook.trueforge_session_id) {
+    throw new DomainError('Workbook is not connected to TrueForge', 'workbook_not_connected', 409);
+  }
+  try {
+    await refreshCurrentTurn(workbook.id);
+  } catch (error) {
+    throw trueForgeUnavailable(error);
+  }
+
+  const pending = workbooks.getPendingQuestion(workbook.id);
+  if (!pending || pending.tool_call_id !== toolCallId.data) {
+    throw new DomainError('The requested question is not pending', 'question_not_found', 404);
+  }
+
+  workbooks.markQuestionSubmitting(workbook.id, toolCallId.data, input.data);
+  let answerTurn: TrueForgeTurnInput;
+  try {
+    answerTurn = await trueForge.answerQuestion(workbook.trueforge_session_id, {
+      threadId: pending.thread_id,
+      toolCallId: pending.tool_call_id,
+      content: input.data.answer,
+    });
+  } catch (error) {
+    workbooks.resetQuestionSubmission(workbook.id, toolCallId.data);
+    throw trueForgeUnavailable(error);
+  }
+
+  try {
+    workbooks.saveTrueForgeTurn(workbook.id, answerTurn);
+    workbooks.completeQuestion(workbook.id, toolCallId.data, input.data, answerTurn.id);
+  } catch (error) {
+    workbooks.resetQuestionSubmission(workbook.id, toolCallId.data);
+    throw error;
+  }
+
+  return c.json(WorkbookSnapshotResponseSchema.parse({ data: workbooks.getSnapshot(workbook.id) }));
 });
 
 serve(
