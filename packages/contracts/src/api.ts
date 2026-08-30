@@ -110,6 +110,41 @@ export const RegisterTaskDataSchema = z
   })
   .strict();
 
+export const RegisterSchemaDataSchema = z
+  .object({
+    task_id: IdSchema,
+    state: z.literal('awaiting_schema_review'),
+    tables: z.array(
+      z
+        .object({
+          id: IdSchema,
+          slug: SlugSchema,
+          kind: TableKindSchema,
+          schema_hash: Sha256Schema,
+        })
+        .strict(),
+    ),
+    aggregate_schema_hash: Sha256Schema,
+    next_action: z.literal('ask_schema_review'),
+  })
+  .strict();
+
+export const StartRunDataSchema = z
+  .object({
+    run_id: IdSchema,
+    mode: RunModeSchema,
+    status: RunStatusSchema,
+    hashes: z
+      .object({
+        task: Sha256Schema,
+        schema: Sha256Schema,
+        pipeline: Sha256Schema,
+      })
+      .strict(),
+    next_action: z.enum(['execute_test', 'ask_production_review']),
+  })
+  .strict();
+
 export const HealthResponseSchema = z
   .object({
     ok: z.literal(true),
@@ -375,6 +410,8 @@ export type GetWorkbookContextData = z.infer<
   typeof GetWorkbookContextDataSchema
 >;
 export type RegisterTaskData = z.infer<typeof RegisterTaskDataSchema>;
+export type RegisterSchemaData = z.infer<typeof RegisterSchemaDataSchema>;
+export type StartRunData = z.infer<typeof StartRunDataSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
