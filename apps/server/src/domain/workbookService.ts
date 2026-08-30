@@ -1,10 +1,12 @@
 import {
   type CreateTaskInput,
   type CreateWorkbookInput,
+  IdSchema,
   TaskSchema,
   type TrueForgeTurn,
+  type TrueForgeTurnInput,
+  TrueForgeTurnInputSchema,
   TrueForgeTurnSchema,
-  type TrueForgeTurnStatus,
   WorkbookSchema,
   WorkbookSnapshotSchema,
 } from '@kalki/contracts';
@@ -102,14 +104,15 @@ export class WorkbookService {
   }
 
   connectTrueForgeSession(workbookId: string, sessionId: string) {
+    const validSessionId = IdSchema.parse(sessionId);
     const workbook = this.getWorkbook(workbookId);
-    if (workbook.trueforge_session_id === sessionId) return workbook;
+    if (workbook.trueforge_session_id === validSessionId) return workbook;
     if (workbook.trueforge_session_id) {
       throw new DomainError('Workbook is already connected to TrueForge', 'workbook_already_connected', 409);
     }
     const sessionOwner = this.database
       .prepare('SELECT id FROM workbooks WHERE trueforge_session_id = ?')
-      .get(sessionId) as { id: string } | undefined;
+      .get(validSessionId) as { id: string } | undefined;
     if (sessionOwner) {
       throw new DomainError('TrueForge session is already connected to another workbook', 'session_already_connected', 409);
     }
@@ -118,10 +121,10 @@ export class WorkbookService {
     this.database.transaction(() => {
       this.database
         .prepare('UPDATE workbooks SET trueforge_session_id = ?, updated_at = ? WHERE id = ?')
-        .run(sessionId, timestamp, workbookId);
+        .run(validSessionId, timestamp, workbookId);
       this.database
         .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
-        .run(workbookId, 'workbook.connected', JSON.stringify({ session_id: sessionId }), timestamp);
+        .run(workbookId, 'workbook.connected', JSON.stringify({ session_id: validSessionId }), timestamp);
     })();
 
     return this.getWorkbook(workbookId);
@@ -136,23 +139,13 @@ export class WorkbookService {
     return row ? this.parseTrueForgeTurn(row) : null;
   }
 
-  saveTrueForgeTurn(
-    workbookId: string,
-    input: {
-      id: string;
-      sessionId: string;
-      previousTurnId: string | null;
-      status: TrueForgeTurnStatus;
-      requiredActions: unknown[];
-      createdAt: string;
-      finishedAt: string | null;
-    },
-  ) {
+  saveTrueForgeTurn(workbookId: string, input: TrueForgeTurnInput) {
+    const turn = TrueForgeTurnInputSchema.parse(input);
     const workbook = this.getWorkbook(workbookId);
-    if (workbook.trueforge_session_id !== input.sessionId) {
+    if (workbook.trueforge_session_id !== turn.sessionId) {
       throw new DomainError('TrueForge turn does not belong to this workbook session', 'turn_session_mismatch', 409);
     }
-    const turnOwner = this.database.prepare('SELECT workbook_id FROM trueforge_turns WHERE id = ?').get(input.id) as
+    const turnOwner = this.database.prepare('SELECT workbook_id FROM trueforge_turns WHERE id = ?').get(turn.id) as
       | { workbook_id: string }
       | undefined;
     if (turnOwner && turnOwner.workbook_id !== workbookId) {
@@ -174,21 +167,21 @@ export class WorkbookService {
              updated_at = excluded.updated_at`,
         )
         .run(
-          input.id,
+          turn.id,
           workbookId,
-          input.previousTurnId,
-          input.status,
-          JSON.stringify(input.requiredActions),
-          input.createdAt,
-          input.finishedAt,
+          turn.previousTurnId,
+          turn.status,
+          JSON.stringify(turn.requiredActions),
+          turn.createdAt,
+          turn.finishedAt,
           timestamp,
         );
       this.database
         .prepare('UPDATE workbooks SET current_trueforge_turn_id = ?, updated_at = ? WHERE id = ?')
-        .run(input.id, timestamp, workbookId);
+        .run(turn.id, timestamp, workbookId);
     })();
 
-    const row = this.database.prepare('SELECT * FROM trueforge_turns WHERE id = ?').get(input.id);
+    const row = this.database.prepare('SELECT * FROM trueforge_turns WHERE id = ?').get(turn.id);
     return this.parseTrueForgeTurn(row);
   }
 

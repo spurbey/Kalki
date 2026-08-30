@@ -27,6 +27,8 @@ const trueForge = new TrueForgeClient({
   frameworkSkillName: config.frameworkSkillName,
 });
 const app = new Hono();
+const connectingWorkbooks = new Set<string>();
+const turningWorkbooks = new Set<string>();
 
 function trueForgeUnavailable(error: unknown) {
   console.error(error);
@@ -142,22 +144,41 @@ app.post('/api/v1/workbooks/:workbookId/connect', async c => {
     );
   }
 
-  const workbook = workbooks.getWorkbook(workbookId.data);
-  if (workbook.trueforge_session_id) {
-    return c.json(WorkbookResponseSchema.parse({ data: workbook }));
+  if (connectingWorkbooks.has(workbookId.data)) {
+    throw new DomainError('Workbook connection is already in progress', 'workbook_connection_in_progress', 409, true);
   }
+  connectingWorkbooks.add(workbookId.data);
 
-  let sessionId: string;
   try {
-    sessionId = await trueForge.createSession();
-  } catch (error) {
-    throw trueForgeUnavailable(error);
+    const workbook = workbooks.getWorkbook(workbookId.data);
+    if (workbook.trueforge_session_id) {
+      return c.json(WorkbookResponseSchema.parse({ data: workbook }));
+    }
+
+    let sessionId: string;
+    try {
+      sessionId = await trueForge.createSession();
+    } catch (error) {
+      throw trueForgeUnavailable(error);
+    }
+
+    try {
+      return c.json(
+        WorkbookResponseSchema.parse({
+          data: workbooks.connectTrueForgeSession(workbookId.data, sessionId),
+        }),
+      );
+    } catch (error) {
+      try {
+        await trueForge.deleteSession(sessionId);
+      } catch (cleanupError) {
+        console.error(cleanupError);
+      }
+      throw error;
+    }
+  } finally {
+    connectingWorkbooks.delete(workbookId.data);
   }
-  return c.json(
-    WorkbookResponseSchema.parse({
-      data: workbooks.connectTrueForgeSession(workbookId.data, sessionId),
-    }),
-  );
 });
 
 app.post('/api/v1/workbooks/:workbookId/tasks', async c => {
@@ -229,36 +250,55 @@ app.post('/api/v1/workbooks/:workbookId/turns', async c => {
     );
   }
 
-  const workbook = workbooks.getWorkbook(workbookId.data);
-  if (!workbook.trueforge_session_id) {
-    throw new DomainError('Workbook is not connected to TrueForge', 'workbook_not_connected', 409);
+  if (turningWorkbooks.has(workbookId.data)) {
+    throw new DomainError('A TrueForge turn request is already in progress', 'turn_request_in_progress', 409, true);
   }
+  turningWorkbooks.add(workbookId.data);
 
-  let current = workbooks.getCurrentTrueForgeTurn(workbook.id);
-  if (current?.status === 'running') {
+  try {
+    const workbook = workbooks.getWorkbook(workbookId.data);
+    if (!workbook.trueforge_session_id) {
+      throw new DomainError('Workbook is not connected to TrueForge', 'workbook_not_connected', 409);
+    }
+
+    let current = workbooks.getCurrentTrueForgeTurn(workbook.id);
+    if (current?.status === 'running') {
+      try {
+        current = workbooks.saveTrueForgeTurn(
+          workbook.id,
+          await trueForge.getTurn(workbook.trueforge_session_id, current.id),
+        );
+      } catch (error) {
+        throw trueForgeUnavailable(error);
+      }
+      if (current.status === 'running') {
+        throw new DomainError('A TrueForge turn is already running', 'turn_already_running', 409, true);
+      }
+    }
+
+    let turn;
     try {
-      current = workbooks.saveTrueForgeTurn(
-        workbook.id,
-        await trueForge.getTurn(workbook.trueforge_session_id, current.id),
-      );
+      turn = await trueForge.createTurn(workbook.trueforge_session_id, input.data.input);
     } catch (error) {
       throw trueForgeUnavailable(error);
     }
-    if (current.status === 'running') {
-      throw new DomainError('A TrueForge turn is already running', 'turn_already_running', 409, true);
-    }
-  }
 
-  try {
-    const turn = await trueForge.createTurn(workbook.trueforge_session_id, input.data.input);
-    return c.json(
-      TrueForgeTurnResponseSchema.parse({
-        data: workbooks.saveTrueForgeTurn(workbook.id, turn),
-      }),
-    );
-  } catch (error) {
-    if (error instanceof DomainError) throw error;
-    throw trueForgeUnavailable(error);
+    try {
+      return c.json(
+        TrueForgeTurnResponseSchema.parse({
+          data: workbooks.saveTrueForgeTurn(workbook.id, turn),
+        }),
+      );
+    } catch (error) {
+      try {
+        await trueForge.cancelSession(workbook.trueforge_session_id);
+      } catch (cleanupError) {
+        console.error(cleanupError);
+      }
+      throw error;
+    }
+  } finally {
+    turningWorkbooks.delete(workbookId.data);
   }
 });
 

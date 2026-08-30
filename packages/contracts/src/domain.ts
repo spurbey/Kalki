@@ -113,6 +113,19 @@ export const WorkbookSchema = z
 export const TrueForgeTurnStatusSchema = z.enum(['running', 'done', 'cancelled', 'error']);
 export type TrueForgeTurnStatus = z.infer<typeof TrueForgeTurnStatusSchema>;
 
+export const TrueForgeTurnInputSchema = z
+  .object({
+    id: IdSchema,
+    sessionId: IdSchema,
+    previousTurnId: IdSchema.nullable(),
+    status: TrueForgeTurnStatusSchema,
+    requiredActions: z.array(JsonValueSchema),
+    createdAt: TimestampSchema,
+    finishedAt: TimestampSchema.nullable(),
+  })
+  .strict();
+export type TrueForgeTurnInput = z.infer<typeof TrueForgeTurnInputSchema>;
+
 export const TrueForgeTurnSchema = z
   .object({
     id: IdSchema,
