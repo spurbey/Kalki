@@ -12,11 +12,11 @@ Class references use `<workspace-relative-python-file>:<ClassName>`.
 Current commands:
 
 ```bash
-python -m kalki_runtime.pipeline_cli lint --pipeline pipelines/<name>.yaml
-python -m kalki_runtime.pipeline_cli test --pipeline pipelines/<name>.yaml --run-id <id> --limit 5
-python -m kalki_runtime.pipeline_cli start-production --pipeline pipelines/<name>.yaml --run-id <id>
-python -m kalki_runtime.pipeline_cli next-batch --run-id <id> --limit 50
-python -m kalki_runtime.pipeline_cli finalize --run-id <id>
+PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.pipeline_cli lint --pipeline pipelines/<name>.yaml
+PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.pipeline_cli test --pipeline pipelines/<name>.yaml --run-id <id> --limit 5
+PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.pipeline_cli start-production --pipeline pipelines/<name>.yaml --run-id <id>
+PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.pipeline_cli next-batch --run-id <id> --limit 50
+PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.pipeline_cli finalize --run-id <id>
 ```
 
 `lint` performs no network request. `test` writes bounded JSONL and a compact manifest under `runs/<run-id>/` and never publishes formal rows.

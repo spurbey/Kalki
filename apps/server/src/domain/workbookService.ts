@@ -45,16 +45,20 @@ import {
   TrueForgeTurnSchema,
   WorkbookSchema,
   WorkbookSnapshotSchema,
-} from '@kalki/contracts';
-import Database from 'better-sqlite3';
-import { createHash, randomUUID } from 'node:crypto';
-import { DomainError } from './errors.js';
+} from "@kalki/contracts";
+import Database from "better-sqlite3";
+import { createHash, randomUUID } from "node:crypto";
+import { DomainError } from "./errors.js";
 
 function hashJson(value: unknown): string {
-  return createHash('sha256').update(canonicalHashJson(value), 'utf8').digest('hex');
+  return createHash("sha256")
+    .update(canonicalHashJson(value), "utf8")
+    .digest("hex");
 }
 
-function aggregateSchemaHash(tables: Array<{ schema_path: string; schema_hash: string }>): string | null {
+function aggregateSchemaHash(
+  tables: Array<{ schema_path: string; schema_hash: string }>,
+): string | null {
   if (tables.length === 0) return null;
   return hashJson(
     tables
@@ -68,38 +72,59 @@ type TableDocument = ReturnType<typeof TableSchemaDocumentSchema.parse>;
 function validDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  );
 }
 
-function validColumnValue(value: unknown, column: TableDocument['columns'][number]): boolean {
+function validColumnValue(
+  value: unknown,
+  column: TableDocument["columns"][number],
+): boolean {
   if (value === null) return column.nullable;
 
   let valid = false;
-  if (column.type === 'string') valid = typeof value === 'string';
-  else if (column.type === 'integer') valid = typeof value === 'number' && Number.isInteger(value);
-  else if (column.type === 'number') valid = typeof value === 'number' && Number.isFinite(value);
-  else if (column.type === 'boolean') valid = typeof value === 'boolean';
-  else if (column.type === 'date') valid = typeof value === 'string' && validDate(value);
-  else if (column.type === 'datetime') {
+  if (column.type === "string") valid = typeof value === "string";
+  else if (column.type === "integer")
+    valid = typeof value === "number" && Number.isInteger(value);
+  else if (column.type === "number")
+    valid = typeof value === "number" && Number.isFinite(value);
+  else if (column.type === "boolean") valid = typeof value === "boolean";
+  else if (column.type === "date")
+    valid = typeof value === "string" && validDate(value);
+  else if (column.type === "datetime") {
     valid =
-      typeof value === 'string' &&
+      typeof value === "string" &&
       /(Z|[+-]\d{2}:\d{2})$/.test(value) &&
       !Number.isNaN(Date.parse(value));
-  } else if (column.type === 'url') {
+  } else if (column.type === "url") {
     try {
       const url = new URL(String(value));
-      valid = typeof value === 'string' && (url.protocol === 'http:' || url.protocol === 'https:');
+      valid =
+        typeof value === "string" &&
+        (url.protocol === "http:" || url.protocol === "https:");
     } catch {
       valid = false;
     }
-  } else if (column.type === 'enum') {
-    valid = typeof value === 'string' && (column.values ?? []).includes(value);
+  } else if (column.type === "enum") {
+    valid = typeof value === "string" && (column.values ?? []).includes(value);
   }
 
   if (!valid) return false;
-  if (typeof value === 'number' && column.minimum !== undefined && value < column.minimum) return false;
-  if (typeof value === 'number' && column.maximum !== undefined && value > column.maximum) return false;
-  if (typeof value === 'string' && column.pattern !== undefined) {
+  if (
+    typeof value === "number" &&
+    column.minimum !== undefined &&
+    value < column.minimum
+  )
+    return false;
+  if (
+    typeof value === "number" &&
+    column.maximum !== undefined &&
+    value > column.maximum
+  )
+    return false;
+  if (typeof value === "string" && column.pattern !== undefined) {
     try {
       if (!new RegExp(column.pattern).test(value)) return false;
     } catch {
@@ -109,19 +134,33 @@ function validColumnValue(value: unknown, column: TableDocument['columns'][numbe
   return true;
 }
 
-function validateRecordData(schema: TableDocument, data: Record<string, unknown>): void {
+function validateRecordData(
+  schema: TableDocument,
+  data: Record<string, unknown>,
+): void {
   const expected = schema.columns.map((column) => column.name).sort();
   if (canonicalJson(Object.keys(data).sort()) !== canonicalJson(expected)) {
-    throw new DomainError('Record columns do not match the registered schema', 'schema_validation_failed', 400);
+    throw new DomainError(
+      "Record columns do not match the registered schema",
+      "schema_validation_failed",
+      400,
+    );
   }
   for (const column of schema.columns) {
     if (!validColumnValue(data[column.name], column)) {
-      throw new DomainError(`Record column '${column.name}' is invalid`, 'schema_validation_failed', 400);
+      throw new DomainError(
+        `Record column '${column.name}' is invalid`,
+        "schema_validation_failed",
+        400,
+      );
     }
   }
 }
 
-function recordDedupeKey(schema: TableDocument, data: Record<string, unknown>): string {
+function recordDedupeKey(
+  schema: TableDocument,
+  data: Record<string, unknown>,
+): string {
   const values = schema.table.primary_key.map((name) => data[name]);
   return values.length === 1 ? String(values[0]) : canonicalJson(values);
 }
@@ -129,7 +168,7 @@ function recordDedupeKey(schema: TableDocument, data: Record<string, unknown>): 
 type PendingQuestionRegistration = {
   taskId: string | null;
   runId?: string | null;
-  gateKind: AgentQuestion['gate_kind'];
+  gateKind: AgentQuestion["gate_kind"];
   questionTurnId: string;
   questionEventId: string;
   toolCallId: string;
@@ -163,16 +202,31 @@ export class WorkbookService {
         )
         .run(workbook);
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
-        .run(workbook.id, 'workbook.created', JSON.stringify({ workbook_id: workbook.id }), timestamp);
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          workbook.id,
+          "workbook.created",
+          JSON.stringify({ workbook_id: workbook.id }),
+          timestamp,
+        );
     })();
 
     return workbook;
   }
 
   createTask(workbookId: string, input: CreateTaskInput) {
-    if (!this.database.prepare('SELECT 1 FROM workbooks WHERE id = ?').get(workbookId)) {
-      throw new DomainError(`Workbook '${workbookId}' was not found`, 'not_found', 404);
+    if (
+      !this.database
+        .prepare("SELECT 1 FROM workbooks WHERE id = ?")
+        .get(workbookId)
+    ) {
+      throw new DomainError(
+        `Workbook '${workbookId}' was not found`,
+        "not_found",
+        404,
+      );
     }
 
     const timestamp = new Date().toISOString();
@@ -182,7 +236,7 @@ export class WorkbookService {
       slug: input.slug,
       title: input.title,
       objective: input.objective,
-      state: 'aligning',
+      state: "aligning",
       task_path: null,
       task_markdown: null,
       task_hash: null,
@@ -204,16 +258,27 @@ export class WorkbookService {
           )
           .run(task);
         this.database
-          .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
-          .run(workbookId, 'task.created', JSON.stringify({ task_id: task.id }), timestamp);
+          .prepare(
+            "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            workbookId,
+            "task.created",
+            JSON.stringify({ task_id: task.id }),
+            timestamp,
+          );
       })();
     } catch (error) {
       if (
         error instanceof Database.SqliteError &&
-        error.code === 'SQLITE_CONSTRAINT_UNIQUE' &&
-        error.message.includes('tasks.workbook_id, tasks.slug')
+        error.code === "SQLITE_CONSTRAINT_UNIQUE" &&
+        error.message.includes("tasks.workbook_id, tasks.slug")
       ) {
-        throw new DomainError(`Task slug '${input.slug}' already exists in this workbook`, 'task_slug_conflict', 409);
+        throw new DomainError(
+          `Task slug '${input.slug}' already exists in this workbook`,
+          "task_slug_conflict",
+          409,
+        );
       }
       throw error;
     }
@@ -222,8 +287,15 @@ export class WorkbookService {
   }
 
   getWorkbook(workbookId: string) {
-    const row = this.database.prepare('SELECT * FROM workbooks WHERE id = ?').get(workbookId);
-    if (!row) throw new DomainError(`Workbook '${workbookId}' was not found`, 'not_found', 404);
+    const row = this.database
+      .prepare("SELECT * FROM workbooks WHERE id = ?")
+      .get(workbookId);
+    if (!row)
+      throw new DomainError(
+        `Workbook '${workbookId}' was not found`,
+        "not_found",
+        404,
+      );
     return WorkbookSchema.parse(row);
   }
 
@@ -232,23 +304,40 @@ export class WorkbookService {
     const workbook = this.getWorkbook(workbookId);
     if (workbook.trueforge_session_id === validSessionId) return workbook;
     if (workbook.trueforge_session_id) {
-      throw new DomainError('Workbook is already connected to TrueForge', 'workbook_already_connected', 409);
+      throw new DomainError(
+        "Workbook is already connected to TrueForge",
+        "workbook_already_connected",
+        409,
+      );
     }
     const sessionOwner = this.database
-      .prepare('SELECT id FROM workbooks WHERE trueforge_session_id = ?')
+      .prepare("SELECT id FROM workbooks WHERE trueforge_session_id = ?")
       .get(validSessionId) as { id: string } | undefined;
     if (sessionOwner) {
-      throw new DomainError('TrueForge session is already connected to another workbook', 'session_already_connected', 409);
+      throw new DomainError(
+        "TrueForge session is already connected to another workbook",
+        "session_already_connected",
+        409,
+      );
     }
 
     const timestamp = new Date().toISOString();
     this.database.transaction(() => {
       this.database
-        .prepare('UPDATE workbooks SET trueforge_session_id = ?, updated_at = ? WHERE id = ?')
+        .prepare(
+          "UPDATE workbooks SET trueforge_session_id = ?, updated_at = ? WHERE id = ?",
+        )
         .run(validSessionId, timestamp, workbookId);
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
-        .run(workbookId, 'workbook.connected', JSON.stringify({ session_id: validSessionId }), timestamp);
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          workbookId,
+          "workbook.connected",
+          JSON.stringify({ session_id: validSessionId }),
+          timestamp,
+        );
     })();
 
     return this.getWorkbook(workbookId);
@@ -258,7 +347,7 @@ export class WorkbookService {
     const workbook = this.getWorkbook(workbookId);
     if (!workbook.current_trueforge_turn_id) return null;
     const row = this.database
-      .prepare('SELECT * FROM trueforge_turns WHERE id = ?')
+      .prepare("SELECT * FROM trueforge_turns WHERE id = ?")
       .get(workbook.current_trueforge_turn_id);
     return row ? this.parseTrueForgeTurn(row) : null;
   }
@@ -267,13 +356,21 @@ export class WorkbookService {
     const turn = TrueForgeTurnInputSchema.parse(input);
     const workbook = this.getWorkbook(workbookId);
     if (workbook.trueforge_session_id !== turn.sessionId) {
-      throw new DomainError('TrueForge turn does not belong to this workbook session', 'turn_session_mismatch', 409);
+      throw new DomainError(
+        "TrueForge turn does not belong to this workbook session",
+        "turn_session_mismatch",
+        409,
+      );
     }
-    const turnOwner = this.database.prepare('SELECT workbook_id FROM trueforge_turns WHERE id = ?').get(turn.id) as
-      | { workbook_id: string }
-      | undefined;
+    const turnOwner = this.database
+      .prepare("SELECT workbook_id FROM trueforge_turns WHERE id = ?")
+      .get(turn.id) as { workbook_id: string } | undefined;
     if (turnOwner && turnOwner.workbook_id !== workbookId) {
-      throw new DomainError('TrueForge turn is already stored for another workbook', 'turn_already_connected', 409);
+      throw new DomainError(
+        "TrueForge turn is already stored for another workbook",
+        "turn_already_connected",
+        409,
+      );
     }
 
     const timestamp = new Date().toISOString();
@@ -301,11 +398,15 @@ export class WorkbookService {
           timestamp,
         );
       this.database
-        .prepare('UPDATE workbooks SET current_trueforge_turn_id = ?, updated_at = ? WHERE id = ?')
+        .prepare(
+          "UPDATE workbooks SET current_trueforge_turn_id = ?, updated_at = ? WHERE id = ?",
+        )
         .run(turn.id, timestamp, workbookId);
     })();
 
-    const row = this.database.prepare('SELECT * FROM trueforge_turns WHERE id = ?').get(turn.id);
+    const row = this.database
+      .prepare("SELECT * FROM trueforge_turns WHERE id = ?")
+      .get(turn.id);
     return this.parseTrueForgeTurn(row);
   }
 
@@ -313,15 +414,21 @@ export class WorkbookService {
     const workbook = this.getWorkbook(workbookId);
     if (input.taskId) {
       const task = this.database
-        .prepare('SELECT workbook_id FROM tasks WHERE id = ?')
+        .prepare("SELECT workbook_id FROM tasks WHERE id = ?")
         .get(input.taskId) as { workbook_id: string } | undefined;
       if (!task || task.workbook_id !== workbook.id) {
-        throw new DomainError('Question task does not belong to this workbook', 'question_task_mismatch', 409);
+        throw new DomainError(
+          "Question task does not belong to this workbook",
+          "question_task_mismatch",
+          409,
+        );
       }
     }
 
     const existingRow = this.database
-      .prepare('SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?')
+      .prepare(
+        "SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?",
+      )
       .get(workbook.id, input.toolCallId);
     if (existingRow) {
       const existing = this.parseAgentQuestion(existingRow);
@@ -329,7 +436,11 @@ export class WorkbookService {
         existing.question_event_id !== input.questionEventId ||
         existing.question_turn_id !== input.questionTurnId
       ) {
-        throw new DomainError('Question tool call is already linked to another action', 'question_identity_conflict', 409);
+        throw new DomainError(
+          "Question tool call is already linked to another action",
+          "question_identity_conflict",
+          409,
+        );
       }
       return existing;
     }
@@ -347,7 +458,7 @@ export class WorkbookService {
       thread_id: input.threadId,
       question_text: input.questionText,
       options: input.options,
-      status: 'pending',
+      status: "pending",
       answer_text: null,
       decision: null,
       answer_turn_id: null,
@@ -384,10 +495,12 @@ export class WorkbookService {
           question.answered_at,
         );
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
         .run(
           workbook.id,
-          'agent.question_pending',
+          "agent.question_pending",
           JSON.stringify({
             question_id: question.id,
             task_id: question.task_id,
@@ -413,30 +526,139 @@ export class WorkbookService {
     return row ? this.parseAgentQuestion(row) : null;
   }
 
-  markQuestionSubmitting(workbookId: string, toolCallId: string, input: AnswerQuestionInput) {
+  markQuestionSubmitting(
+    workbookId: string,
+    toolCallId: string,
+    input: AnswerQuestionInput,
+  ) {
     const question = this.questionForAnswer(workbookId, toolCallId, input);
-    if (question.status === 'submitting') {
-      throw new DomainError('Question answer is already being submitted', 'question_submission_in_progress', 409, true);
+    if (question.status === "submitting") {
+      throw new DomainError(
+        "Question answer is already being submitted",
+        "question_submission_in_progress",
+        409,
+        true,
+      );
     }
-    if (question.status !== 'pending') {
-      throw new DomainError('Question is no longer pending', 'question_not_pending', 409);
+    if (question.status !== "pending") {
+      throw new DomainError(
+        "Question is no longer pending",
+        "question_not_pending",
+        409,
+      );
     }
-    this.resolveQuestionTransition(question, input);
+    const { task, run } = this.resolveQuestionTransition(question, input);
+    const timestamp = new Date().toISOString();
+    const approval =
+      question.gate_kind === "production_review" &&
+      input.decision === "approve" &&
+      task &&
+      run
+        ? ApprovalEventSchema.parse({
+            id: `approval_${randomUUID()}`,
+            workbook_id: workbookId,
+            task_id: task.id,
+            run_id: run.id,
+            agent_question_id: question.id,
+            question_event_id: question.question_event_id,
+            tool_call_id: question.tool_call_id,
+            question_turn_id: question.question_turn_id,
+            answer_turn_id: `pending_${question.id}`,
+            answer_text: input.answer,
+            approved_task_hash: run.task_hash,
+            approved_schema_hash: run.schema_hash,
+            approved_pipeline_hash: run.pipeline_hash,
+            created_at: timestamp,
+          })
+        : null;
 
-    this.database
-      .prepare('UPDATE agent_questions SET status = ? WHERE id = ? AND status = ?')
-      .run('submitting', question.id, 'pending');
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          "UPDATE agent_questions SET status = ? WHERE id = ? AND status = ?",
+        )
+        .run("submitting", question.id, "pending");
+      if (!approval) return;
+      this.database
+        .prepare(
+          `INSERT INTO approval_events(
+             id, workbook_id, task_id, run_id, agent_question_id, question_event_id,
+             tool_call_id, question_turn_id, answer_turn_id, answer_text,
+             approved_task_hash, approved_schema_hash, approved_pipeline_hash, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          approval.id,
+          approval.workbook_id,
+          approval.task_id,
+          approval.run_id,
+          approval.agent_question_id,
+          approval.question_event_id,
+          approval.tool_call_id,
+          approval.question_turn_id,
+          approval.answer_turn_id,
+          approval.answer_text,
+          approval.approved_task_hash,
+          approval.approved_schema_hash,
+          approval.approved_pipeline_hash,
+          approval.created_at,
+        );
+      this.database
+        .prepare(
+          `UPDATE runs
+           SET status = 'authorized', approved_at = ?, approval_event_id = ?,
+               approved_task_hash = ?, approved_schema_hash = ?, approved_pipeline_hash = ?,
+               updated_at = ?
+           WHERE id = ? AND status = 'awaiting_confirmation'`,
+        )
+        .run(
+          timestamp,
+          approval.id,
+          approval.approved_task_hash,
+          approval.approved_schema_hash,
+          approval.approved_pipeline_hash,
+          timestamp,
+          approval.run_id,
+        );
+    })();
     return this.getQuestion(question.id);
   }
 
   resetQuestionSubmission(workbookId: string, toolCallId: string) {
-    const question = this.database
-      .prepare('SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?')
+    const row = this.database
+      .prepare(
+        "SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?",
+      )
       .get(workbookId, toolCallId);
-    if (question) {
-      this.database
-        .prepare("UPDATE agent_questions SET status = 'pending' WHERE id = ? AND status = 'submitting'")
-        .run((question as { id: string }).id);
+    if (row) {
+      const question = this.parseAgentQuestion(row);
+      const approval = this.database
+        .prepare(
+          "SELECT id, run_id FROM approval_events WHERE agent_question_id = ?",
+        )
+        .get(question.id) as { id: string; run_id: string } | undefined;
+      const timestamp = new Date().toISOString();
+      this.database.transaction(() => {
+        if (approval) {
+          this.database
+            .prepare("DELETE FROM approval_events WHERE id = ?")
+            .run(approval.id);
+          this.database
+            .prepare(
+              `UPDATE runs
+               SET status = 'awaiting_confirmation', approved_at = NULL, approval_event_id = NULL,
+                   approved_task_hash = NULL, approved_schema_hash = NULL,
+                   approved_pipeline_hash = NULL, updated_at = ?
+               WHERE id = ? AND status = 'authorized'`,
+            )
+            .run(timestamp, approval.run_id);
+        }
+        this.database
+          .prepare(
+            "UPDATE agent_questions SET status = 'pending' WHERE id = ? AND status = 'submitting'",
+          )
+          .run(question.id);
+      })();
     }
   }
 
@@ -447,37 +669,49 @@ export class WorkbookService {
     answerTurnId: string,
   ) {
     const question = this.questionForAnswer(workbookId, toolCallId, input);
-    if (question.status === 'answered') {
-      if (question.answer_turn_id === answerTurnId && question.answer_text === input.answer) {
+    if (question.status === "answered") {
+      if (
+        question.answer_turn_id === answerTurnId &&
+        question.answer_text === input.answer
+      ) {
         return question;
       }
-      throw new DomainError('Question has already been answered', 'question_already_answered', 409);
+      throw new DomainError(
+        "Question has already been answered",
+        "question_already_answered",
+        409,
+      );
     }
-    if (question.status !== 'submitting') {
-      throw new DomainError('Question is not being submitted', 'question_not_submitting', 409);
+    if (question.status !== "submitting") {
+      throw new DomainError(
+        "Question is not being submitted",
+        "question_not_submitting",
+        409,
+      );
     }
 
-    const { task, run, nextState } = this.resolveQuestionTransition(question, input);
+    const { task, run, nextState } = this.resolveQuestionTransition(
+      question,
+      input,
+    );
     const timestamp = new Date().toISOString();
-    const approval =
-      question.gate_kind === 'production_review' && input.decision === 'approve' && task && run
-        ? ApprovalEventSchema.parse({
-            id: `approval_${randomUUID()}`,
-            workbook_id: workbookId,
-            task_id: task.id,
-            run_id: run.id,
-            agent_question_id: question.id,
-            question_event_id: question.question_event_id,
-            tool_call_id: question.tool_call_id,
-            question_turn_id: question.question_turn_id,
-            answer_turn_id: answerTurnId,
-            answer_text: input.answer,
-            approved_task_hash: run.task_hash,
-            approved_schema_hash: run.schema_hash,
-            approved_pipeline_hash: run.pipeline_hash,
-            created_at: timestamp,
-          })
-        : null;
+    const approvalRow = this.database
+      .prepare("SELECT * FROM approval_events WHERE agent_question_id = ?")
+      .get(question.id);
+    const approval = approvalRow
+      ? ApprovalEventSchema.parse(approvalRow)
+      : null;
+    if (
+      question.gate_kind === "production_review" &&
+      input.decision === "approve" &&
+      !approval
+    ) {
+      throw new DomainError(
+        "Production approval was not recorded before release",
+        "production_not_authorized",
+        409,
+      );
+    }
     this.database.transaction(() => {
       this.database
         .prepare(
@@ -485,50 +719,20 @@ export class WorkbookService {
            SET status = 'answered', answer_text = ?, decision = ?, answer_turn_id = ?, answered_at = ?
            WHERE id = ? AND status = 'submitting'`,
         )
-        .run(input.answer, input.decision, answerTurnId, timestamp, question.id);
+        .run(
+          input.answer,
+          input.decision,
+          answerTurnId,
+          timestamp,
+          question.id,
+        );
       if (approval) {
         this.database
           .prepare(
-            `INSERT INTO approval_events(
-               id, workbook_id, task_id, run_id, agent_question_id, question_event_id,
-               tool_call_id, question_turn_id, answer_turn_id, answer_text,
-               approved_task_hash, approved_schema_hash, approved_pipeline_hash, created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            "UPDATE approval_events SET answer_turn_id = ?, answer_text = ? WHERE id = ?",
           )
-          .run(
-            approval.id,
-            approval.workbook_id,
-            approval.task_id,
-            approval.run_id,
-            approval.agent_question_id,
-            approval.question_event_id,
-            approval.tool_call_id,
-            approval.question_turn_id,
-            approval.answer_turn_id,
-            approval.answer_text,
-            approval.approved_task_hash,
-            approval.approved_schema_hash,
-            approval.approved_pipeline_hash,
-            approval.created_at,
-          );
-        this.database
-          .prepare(
-            `UPDATE runs
-             SET status = 'authorized', approved_at = ?, approval_event_id = ?,
-                 approved_task_hash = ?, approved_schema_hash = ?, approved_pipeline_hash = ?,
-                 updated_at = ?
-             WHERE id = ? AND status = 'awaiting_confirmation'`,
-          )
-          .run(
-            timestamp,
-            approval.id,
-            approval.approved_task_hash,
-            approval.approved_schema_hash,
-            approval.approved_pipeline_hash,
-            timestamp,
-            approval.run_id,
-          );
-      } else if (question.gate_kind === 'production_review' && run) {
+          .run(answerTurnId, input.answer, approval.id);
+      } else if (question.gate_kind === "production_review" && run) {
         this.database
           .prepare(
             `UPDATE runs
@@ -539,14 +743,16 @@ export class WorkbookService {
       }
       if (task && nextState) {
         this.database
-          .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
+          .prepare("UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?")
           .run(nextState, timestamp, task.id);
       }
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
         .run(
           workbookId,
-          'agent.question_answered',
+          "agent.question_answered",
           JSON.stringify({
             question_id: question.id,
             task_id: question.task_id,
@@ -564,47 +770,110 @@ export class WorkbookService {
     return this.getQuestion(question.id);
   }
 
-  private resolveQuestionTransition(question: AgentQuestion, input: AnswerQuestionInput) {
+  private resolveQuestionTransition(
+    question: AgentQuestion,
+    input: AnswerQuestionInput,
+  ) {
     const task = question.task_id
-      ? TaskSchema.parse(this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(question.task_id))
+      ? TaskSchema.parse(
+          this.database
+            .prepare("SELECT * FROM tasks WHERE id = ?")
+            .get(question.task_id),
+        )
       : null;
     const run = question.run_id
-      ? this.parseRun(this.database.prepare('SELECT * FROM runs WHERE id = ?').get(question.run_id))
+      ? this.parseRun(
+          this.database
+            .prepare("SELECT * FROM runs WHERE id = ?")
+            .get(question.run_id),
+        )
       : null;
-    let nextState: Task['state'] | null = null;
-    if (question.gate_kind === 'task_review') {
-      if (!task) throw new DomainError('Task review question is missing its task', 'question_task_missing', 409);
-      if (input.decision === 'approve') nextState = 'exploring';
-      else if (input.decision === 'revise') nextState = 'aligning';
-      else if (input.decision === 'cancel') nextState = 'cancelled';
-      else throw new DomainError('Task review requires approve, revise, or cancel', 'invalid_question_decision', 400);
-    } else if (question.gate_kind === 'schema_review') {
-      if (!task) throw new DomainError('Schema review question is missing its task', 'question_task_missing', 409);
-      if (input.decision === 'approve') nextState = 'building';
-      else if (input.decision === 'revise') nextState = 'exploring';
-      else if (input.decision === 'cancel') nextState = 'cancelled';
-      else throw new DomainError('Schema review requires approve, revise, or cancel', 'invalid_question_decision', 400);
-    } else if (question.gate_kind === 'production_review') {
+    let nextState: Task["state"] | null = null;
+    if (question.gate_kind === "task_review") {
+      if (!task)
+        throw new DomainError(
+          "Task review question is missing its task",
+          "question_task_missing",
+          409,
+        );
+      if (input.decision === "approve") nextState = "exploring";
+      else if (input.decision === "revise") nextState = "aligning";
+      else if (input.decision === "cancel") nextState = "cancelled";
+      else
+        throw new DomainError(
+          "Task review requires approve, revise, or cancel",
+          "invalid_question_decision",
+          400,
+        );
+    } else if (question.gate_kind === "schema_review") {
+      if (!task)
+        throw new DomainError(
+          "Schema review question is missing its task",
+          "question_task_missing",
+          409,
+        );
+      if (input.decision === "approve") nextState = "building";
+      else if (input.decision === "revise") nextState = "exploring";
+      else if (input.decision === "cancel") nextState = "cancelled";
+      else
+        throw new DomainError(
+          "Schema review requires approve, revise, or cancel",
+          "invalid_question_decision",
+          400,
+        );
+    } else if (question.gate_kind === "production_review") {
       if (!task || !run) {
-        throw new DomainError('Production review is missing its task or run', 'question_run_missing', 409);
+        throw new DomainError(
+          "Production review is missing its task or run",
+          "question_run_missing",
+          409,
+        );
       }
-      if (run.task_id !== task.id || run.mode !== 'production' || run.status !== 'awaiting_confirmation') {
-        throw new DomainError('Production review does not match an awaiting run', 'question_run_mismatch', 409);
+      const allowedStatus =
+        run.status === "awaiting_confirmation" ||
+        (input.decision === "approve" && run.status === "authorized");
+      if (
+        run.task_id !== task.id ||
+        run.mode !== "production" ||
+        !allowedStatus
+      ) {
+        throw new DomainError(
+          "Production review does not match an awaiting run",
+          "question_run_mismatch",
+          409,
+        );
       }
-      if (input.decision === 'approve') nextState = 'production_running';
-      else if (input.decision === 'revise') nextState = 'building';
-      else if (input.decision === 'cancel') nextState = 'cancelled';
-      else throw new DomainError('Production review requires approve, revise, or cancel', 'invalid_question_decision', 400);
-    } else if (question.gate_kind === 'clarification') {
-      if (input.decision !== 'free_text') {
-        throw new DomainError('Clarification requires a free-text decision', 'invalid_question_decision', 400);
+      if (input.decision === "approve") nextState = "production_running";
+      else if (input.decision === "revise") nextState = "building";
+      else if (input.decision === "cancel") nextState = "cancelled";
+      else
+        throw new DomainError(
+          "Production review requires approve, revise, or cancel",
+          "invalid_question_decision",
+          400,
+        );
+    } else if (question.gate_kind === "clarification") {
+      if (input.decision !== "free_text") {
+        throw new DomainError(
+          "Clarification requires a free-text decision",
+          "invalid_question_decision",
+          400,
+        );
       }
     } else {
-      throw new DomainError('This question gate is not implemented in the current slice', 'unsupported_question_gate', 409);
+      throw new DomainError(
+        "This question gate is not implemented in the current slice",
+        "unsupported_question_gate",
+        409,
+      );
     }
 
     if (task && nextState && !canTransitionTask(task.state, nextState)) {
-      throw new DomainError(`Task cannot move from '${task.state}' to '${nextState}'`, 'invalid_task_state', 409);
+      throw new DomainError(
+        `Task cannot move from '${task.state}' to '${nextState}'`,
+        "invalid_task_state",
+        409,
+      );
     }
     return { task, run, nextState };
   }
@@ -619,23 +888,37 @@ export class WorkbookService {
         : null;
 
     if (context.task_id && !task) {
-      throw new DomainError(`Task '${context.task_id}' was not found in this workbook`, 'task_not_found', 404);
+      throw new DomainError(
+        `Task '${context.task_id}' was not found in this workbook`,
+        "task_not_found",
+        404,
+      );
     }
     if (!input.task_id && snapshot.tasks.length > 1) {
-      throw new DomainError('task_id is required when a workbook has multiple tasks', 'ambiguous_task', 409);
+      throw new DomainError(
+        "task_id is required when a workbook has multiple tasks",
+        "ambiguous_task",
+        409,
+      );
     }
 
-    let nextExpectedAction = 'continue_workflow';
-    if (!task) nextExpectedAction = 'create_task';
-    else if (task.state === 'aligning') nextExpectedAction = 'author_task';
-    else if (task.state === 'awaiting_task_confirmation') nextExpectedAction = 'ask_task_review';
-    else if (task.state === 'exploring') nextExpectedAction = 'register_schema';
-    else if (task.state === 'awaiting_schema_review') nextExpectedAction = 'ask_schema_review';
-    else if (task.state === 'building') nextExpectedAction = 'start_test_run';
-    else if (task.state === 'testing') nextExpectedAction = 'complete_test_run';
+    let nextExpectedAction = "continue_workflow";
+    if (!task) nextExpectedAction = "create_task";
+    else if (task.state === "aligning") nextExpectedAction = "author_task";
+    else if (task.state === "awaiting_task_confirmation")
+      nextExpectedAction = "ask_task_review";
+    else if (task.state === "exploring") nextExpectedAction = "register_schema";
+    else if (task.state === "awaiting_schema_review")
+      nextExpectedAction = "ask_schema_review";
+    else if (task.state === "building") nextExpectedAction = "start_test_run";
+    else if (task.state === "testing") nextExpectedAction = "complete_test_run";
 
-    const taskTables = task ? snapshot.tables.filter(table => table.task_id === task.id) : [];
-    const taskRuns = task ? snapshot.runs.filter(run => run.task_id === task.id) : [];
+    const taskTables = task
+      ? snapshot.tables.filter((table) => table.task_id === task.id)
+      : [];
+    const taskRuns = task
+      ? snapshot.runs.filter((run) => run.task_id === task.id)
+      : [];
 
     return GetWorkbookContextDataSchema.parse({
       workbook: {
@@ -679,33 +962,52 @@ export class WorkbookService {
 
   registerTask(input: RegisterTaskInput) {
     const registration = RegisterTaskInputSchema.parse(input);
-    const row = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(registration.task_id);
-    if (!row) throw new DomainError(`Task '${registration.task_id}' was not found`, 'task_not_found', 404);
+    const row = this.database
+      .prepare("SELECT * FROM tasks WHERE id = ?")
+      .get(registration.task_id);
+    if (!row)
+      throw new DomainError(
+        `Task '${registration.task_id}' was not found`,
+        "task_not_found",
+        404,
+      );
     const task = TaskSchema.parse(row);
-    const canonicalMarkdown = registration.task_markdown.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-    const actualHash = createHash('sha256').update(canonicalMarkdown, 'utf8').digest('hex');
+    const canonicalMarkdown = registration.task_markdown
+      .replace(/^\uFEFF/, "")
+      .replace(/\r\n?/g, "\n");
+    const actualHash = createHash("sha256")
+      .update(canonicalMarkdown, "utf8")
+      .digest("hex");
 
     if (actualHash !== registration.task_hash) {
-      throw new DomainError('task_hash does not match task_markdown', 'task_hash_mismatch', 400);
+      throw new DomainError(
+        "task_hash does not match task_markdown",
+        "task_hash_mismatch",
+        400,
+      );
     }
 
     const result = RegisterTaskDataSchema.parse({
       task_id: task.id,
-      state: 'awaiting_task_confirmation' as const,
+      state: "awaiting_task_confirmation" as const,
       task_path: registration.task_path,
       task_hash: registration.task_hash,
-      next_action: 'ask_task_review',
+      next_action: "ask_task_review",
     });
     if (
-      task.state === 'awaiting_task_confirmation' &&
+      task.state === "awaiting_task_confirmation" &&
       task.task_path === registration.task_path &&
       task.task_hash === registration.task_hash &&
       task.task_markdown === canonicalMarkdown
     ) {
       return result;
     }
-    if (task.state !== 'aligning') {
-      throw new DomainError(`Task cannot be registered while it is '${task.state}'`, 'invalid_task_state', 409);
+    if (task.state !== "aligning") {
+      throw new DomainError(
+        `Task cannot be registered while it is '${task.state}'`,
+        "invalid_task_state",
+        409,
+      );
     }
 
     const timestamp = new Date().toISOString();
@@ -716,12 +1018,21 @@ export class WorkbookService {
            SET state = ?, task_path = ?, task_markdown = ?, task_hash = ?, updated_at = ?
            WHERE id = ?`,
         )
-        .run(result.state, registration.task_path, canonicalMarkdown, registration.task_hash, timestamp, task.id);
+        .run(
+          result.state,
+          registration.task_path,
+          canonicalMarkdown,
+          registration.task_hash,
+          timestamp,
+          task.id,
+        );
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
         .run(
           task.workbook_id,
-          'task.registered',
+          "task.registered",
           JSON.stringify({
             task_id: task.id,
             state: result.state,
@@ -736,24 +1047,43 @@ export class WorkbookService {
 
   registerSchema(input: RegisterSchemaInput) {
     const registration = RegisterSchemaInputSchema.parse(input);
-    const row = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(registration.task_id);
-    if (!row) throw new DomainError(`Task '${registration.task_id}' was not found`, 'task_not_found', 404);
+    const row = this.database
+      .prepare("SELECT * FROM tasks WHERE id = ?")
+      .get(registration.task_id);
+    if (!row)
+      throw new DomainError(
+        `Task '${registration.task_id}' was not found`,
+        "task_not_found",
+        404,
+      );
     const task = TaskSchema.parse(row);
 
     const seenSlugs = new Set<string>();
     const tables = registration.schemas.map((item, ordinal) => {
       const table = item.schema.table;
       if (item.path !== `schemas/${table.slug}.yaml`) {
-        throw new DomainError(`Schema '${item.path}' has invalid table metadata`, 'schema_validation_failed', 400);
+        throw new DomainError(
+          `Schema '${item.path}' has invalid table metadata`,
+          "schema_validation_failed",
+          400,
+        );
       }
       if (seenSlugs.has(table.slug)) {
-        throw new DomainError(`Table slug '${table.slug}' is duplicated`, 'schema_set_invalid', 400);
+        throw new DomainError(
+          `Table slug '${table.slug}' is duplicated`,
+          "schema_set_invalid",
+          400,
+        );
       }
       seenSlugs.add(table.slug);
 
       const actualHash = hashJson(item.schema);
       if (actualHash !== item.schema_hash) {
-        throw new DomainError(`schema_hash does not match '${item.path}'`, 'schema_hash_mismatch', 400);
+        throw new DomainError(
+          `schema_hash does not match '${item.path}'`,
+          "schema_hash_mismatch",
+          400,
+        );
       }
 
       return TableSchema.parse({
@@ -771,22 +1101,30 @@ export class WorkbookService {
       });
     });
 
-    if (tables.filter((table) => table.kind === 'source').length !== 1) {
-      throw new DomainError('Schema set must contain exactly one source table', 'schema_set_invalid', 400);
+    if (tables.filter((table) => table.kind === "source").length !== 1) {
+      throw new DomainError(
+        "Schema set must contain exactly one source table",
+        "schema_set_invalid",
+        400,
+      );
     }
     const actualAggregateHash = aggregateSchemaHash(tables);
     if (actualAggregateHash !== registration.aggregate_schema_hash) {
-      throw new DomainError('aggregate_schema_hash does not match schemas', 'aggregate_schema_hash_mismatch', 400);
+      throw new DomainError(
+        "aggregate_schema_hash does not match schemas",
+        "aggregate_schema_hash_mismatch",
+        400,
+      );
     }
 
     const existing = this.database
-      .prepare('SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal')
+      .prepare("SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal")
       .all(task.id)
       .map((table) => this.parseTable(table));
     const resultFor = (registeredTables: typeof tables) =>
       RegisterSchemaDataSchema.parse({
         task_id: task.id,
-        state: 'awaiting_schema_review',
+        state: "awaiting_schema_review",
         tables: registeredTables.map(({ id, slug, kind, schema_hash }) => ({
           id,
           slug,
@@ -794,26 +1132,33 @@ export class WorkbookService {
           schema_hash,
         })),
         aggregate_schema_hash: registration.aggregate_schema_hash,
-        next_action: 'ask_schema_review',
+        next_action: "ask_schema_review",
       });
 
     if (
-      task.state === 'awaiting_schema_review' &&
+      task.state === "awaiting_schema_review" &&
       existing.length === tables.length &&
       existing.every(
         (table, index) =>
-          table.schema_path === tables[index]?.schema_path && table.schema_hash === tables[index]?.schema_hash,
+          table.schema_path === tables[index]?.schema_path &&
+          table.schema_hash === tables[index]?.schema_hash,
       )
     ) {
       return resultFor(existing);
     }
-    if (task.state !== 'exploring') {
-      throw new DomainError(`Schemas cannot be registered while task is '${task.state}'`, 'invalid_task_state', 409);
+    if (task.state !== "exploring") {
+      throw new DomainError(
+        `Schemas cannot be registered while task is '${task.state}'`,
+        "invalid_task_state",
+        409,
+      );
     }
 
     const timestamp = new Date().toISOString();
     this.database.transaction(() => {
-      this.database.prepare('DELETE FROM tables WHERE task_id = ?').run(task.id);
+      this.database
+        .prepare("DELETE FROM tables WHERE task_id = ?")
+        .run(task.id);
       const insert = this.database.prepare(
         `INSERT INTO tables(
            id, task_id, slug, name, kind, ordinal, schema_path, schema_json, schema_hash, created_at, updated_at
@@ -835,13 +1180,15 @@ export class WorkbookService {
         );
       }
       this.database
-        .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
-        .run('awaiting_schema_review', timestamp, task.id);
+        .prepare("UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?")
+        .run("awaiting_schema_review", timestamp, task.id);
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
         .run(
           task.workbook_id,
-          'schema.registered',
+          "schema.registered",
           JSON.stringify({
             task_id: task.id,
             aggregate_schema_hash: registration.aggregate_schema_hash,
@@ -855,7 +1202,9 @@ export class WorkbookService {
 
   startRun(input: StartRunInput) {
     const requested = StartRunInputSchema.parse(input);
-    const existingRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
+    const existingRow = this.database
+      .prepare("SELECT * FROM runs WHERE id = ?")
+      .get(requested.run_id);
     if (existingRow) {
       const existing = this.parseRun(existingRow);
       if (
@@ -865,28 +1214,54 @@ export class WorkbookService {
         existing.schema_hash !== requested.schema_hash ||
         existing.pipeline_hash !== requested.pipeline_hash
       ) {
-        throw new DomainError(`Run '${requested.run_id}' already has different inputs`, 'run_identity_conflict', 409);
+        throw new DomainError(
+          `Run '${requested.run_id}' already has different inputs`,
+          "run_identity_conflict",
+          409,
+        );
       }
       return this.runResult(existing);
     }
 
-    const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(requested.task_id);
-    if (!taskRow) throw new DomainError(`Task '${requested.task_id}' was not found`, 'task_not_found', 404);
+    const taskRow = this.database
+      .prepare("SELECT * FROM tasks WHERE id = ?")
+      .get(requested.task_id);
+    if (!taskRow)
+      throw new DomainError(
+        `Task '${requested.task_id}' was not found`,
+        "task_not_found",
+        404,
+      );
     const task = TaskSchema.parse(taskRow);
     const tables = this.database
-      .prepare('SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal')
+      .prepare("SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal")
       .all(task.id)
       .map((table) => this.parseTable(table));
-    if (task.task_hash !== requested.task_hash || aggregateSchemaHash(tables) !== requested.schema_hash) {
-      throw new DomainError('Run hashes do not match the current task and schemas', 'hashes_not_current', 409);
+    if (
+      task.task_hash !== requested.task_hash ||
+      aggregateSchemaHash(tables) !== requested.schema_hash
+    ) {
+      throw new DomainError(
+        "Run hashes do not match the current task and schemas",
+        "hashes_not_current",
+        409,
+      );
     }
 
-    if (requested.mode === 'test' && task.state !== 'building') {
-      throw new DomainError(`Test run cannot start while task is '${task.state}'`, 'invalid_task_state', 409);
+    if (requested.mode === "test" && task.state !== "building") {
+      throw new DomainError(
+        `Test run cannot start while task is '${task.state}'`,
+        "invalid_task_state",
+        409,
+      );
     }
-    if (requested.mode === 'production') {
-      if (task.state !== 'awaiting_production_confirmation') {
-        throw new DomainError(`Production run cannot start while task is '${task.state}'`, 'invalid_task_state', 409);
+    if (requested.mode === "production") {
+      if (task.state !== "awaiting_production_confirmation") {
+        throw new DomainError(
+          `Production run cannot start while task is '${task.state}'`,
+          "invalid_task_state",
+          409,
+        );
       }
       const completedTest = this.database
         .prepare(
@@ -894,8 +1269,18 @@ export class WorkbookService {
            WHERE task_id = ? AND mode = 'test' AND status = 'completed'
              AND task_hash = ? AND schema_hash = ? AND pipeline_hash = ?`,
         )
-        .get(task.id, requested.task_hash, requested.schema_hash, requested.pipeline_hash);
-      if (!completedTest) throw new DomainError('A matching successful test is required', 'test_required', 409);
+        .get(
+          task.id,
+          requested.task_hash,
+          requested.schema_hash,
+          requested.pipeline_hash,
+        );
+      if (!completedTest)
+        throw new DomainError(
+          "A matching successful test is required",
+          "test_required",
+          409,
+        );
     }
 
     const timestamp = new Date().toISOString();
@@ -903,7 +1288,7 @@ export class WorkbookService {
       id: requested.run_id,
       task_id: task.id,
       mode: requested.mode,
-      status: requested.mode === 'test' ? 'running' : 'awaiting_confirmation',
+      status: requested.mode === "test" ? "running" : "awaiting_confirmation",
       task_hash: requested.task_hash,
       schema_hash: requested.schema_hash,
       pipeline_hash: requested.pipeline_hash,
@@ -918,7 +1303,7 @@ export class WorkbookService {
       total_record_count: null,
       error: null,
       created_at: timestamp,
-      started_at: requested.mode === 'test' ? timestamp : null,
+      started_at: requested.mode === "test" ? timestamp : null,
       finished_at: null,
       updated_at: timestamp,
     });
@@ -956,14 +1341,21 @@ export class WorkbookService {
           null,
           run.updated_at,
         );
-      if (run.mode === 'test') {
+      if (run.mode === "test") {
         this.database
-          .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
-          .run('testing', timestamp, task.id);
+          .prepare("UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?")
+          .run("testing", timestamp, task.id);
       }
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
-        .run(task.workbook_id, 'run.started', JSON.stringify({ run_id: run.id, mode: run.mode }), timestamp);
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          task.workbook_id,
+          "run.started",
+          JSON.stringify({ run_id: run.id, mode: run.mode }),
+          timestamp,
+        );
     })();
 
     return this.runResult(run);
@@ -971,8 +1363,15 @@ export class WorkbookService {
 
   getProductionAuthorization(input: ProductionAuthorizationInput) {
     const requested = ProductionAuthorizationInputSchema.parse(input);
-    const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
-    if (!runRow) throw new DomainError(`Run '${requested.run_id}' was not found`, 'run_not_found', 404);
+    const runRow = this.database
+      .prepare("SELECT * FROM runs WHERE id = ?")
+      .get(requested.run_id);
+    if (!runRow)
+      throw new DomainError(
+        `Run '${requested.run_id}' was not found`,
+        "run_not_found",
+        404,
+      );
     const run = this.parseRun(runRow);
     const hashes = {
       task: requested.task_hash,
@@ -988,9 +1387,11 @@ export class WorkbookService {
       hashes,
     });
 
-    if (run.mode !== 'production') return denied('run_not_production');
-    if (run.status === 'awaiting_confirmation') return denied('awaiting_explicit_consent');
-    if (!['authorized', 'running', 'finalizing'].includes(run.status)) return denied('run_not_active');
+    if (run.mode !== "production") return denied("run_not_production");
+    if (run.status === "awaiting_confirmation")
+      return denied("awaiting_explicit_consent");
+    if (!["authorized", "running", "finalizing"].includes(run.status))
+      return denied("run_not_active");
     if (
       !run.approved_at ||
       !run.approval_event_id ||
@@ -998,22 +1399,30 @@ export class WorkbookService {
       !run.approved_schema_hash ||
       !run.approved_pipeline_hash
     ) {
-      return denied('approval_evidence_missing');
+      return denied("approval_evidence_missing");
     }
 
-    const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(run.task_id);
-    if (!taskRow) throw new DomainError(`Task '${run.task_id}' was not found`, 'task_not_found', 404);
+    const taskRow = this.database
+      .prepare("SELECT * FROM tasks WHERE id = ?")
+      .get(run.task_id);
+    if (!taskRow)
+      throw new DomainError(
+        `Task '${run.task_id}' was not found`,
+        "task_not_found",
+        404,
+      );
     const task = TaskSchema.parse(taskRow);
     const tables = this.database
-      .prepare('SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal')
+      .prepare("SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal")
       .all(task.id)
       .map((table) => this.parseTable(table));
     const approval = this.database
-      .prepare('SELECT * FROM approval_events WHERE id = ? AND run_id = ?')
-      .get(run.approval_event_id, run.id) as Record<string, unknown> | undefined;
+      .prepare("SELECT * FROM approval_events WHERE id = ? AND run_id = ?")
+      .get(run.approval_event_id, run.id) as
+      Record<string, unknown> | undefined;
     const workbook = this.getWorkbook(task.workbook_id);
 
-    if (!approval) return denied('approval_evidence_missing');
+    if (!approval) return denied("approval_evidence_missing");
     if (
       run.task_hash !== requested.task_hash ||
       run.schema_hash !== requested.schema_hash ||
@@ -1027,12 +1436,12 @@ export class WorkbookService {
       approval.approved_schema_hash !== requested.schema_hash ||
       approval.approved_pipeline_hash !== requested.pipeline_hash
     ) {
-      return denied('approval_hash_mismatch');
+      return denied("approval_hash_mismatch");
     }
 
     return {
       authorized: true,
-      reason: 'authorized',
+      reason: "authorized",
       run_id: run.id,
       approved_at: run.approved_at,
       approval_event_id: run.approval_event_id,
@@ -1052,28 +1461,61 @@ export class WorkbookService {
       records: requested.records,
     });
     if (payloadHash !== requested.payload_hash) {
-      throw new DomainError('payload_hash does not match records', 'payload_hash_mismatch', 400);
+      throw new DomainError(
+        "payload_hash does not match records",
+        "payload_hash_mismatch",
+        400,
+      );
     }
 
     const publish = this.database.transaction(() => {
-      const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
-      if (!runRow) throw new DomainError(`Run '${requested.run_id}' was not found`, 'run_not_found', 404);
+      const runRow = this.database
+        .prepare("SELECT * FROM runs WHERE id = ?")
+        .get(requested.run_id);
+      if (!runRow)
+        throw new DomainError(
+          `Run '${requested.run_id}' was not found`,
+          "run_not_found",
+          404,
+        );
       const run = this.parseRun(runRow);
-      const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(run.task_id);
-      if (!taskRow) throw new DomainError(`Task '${run.task_id}' was not found`, 'task_not_found', 404);
+      const taskRow = this.database
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get(run.task_id);
+      if (!taskRow)
+        throw new DomainError(
+          `Task '${run.task_id}' was not found`,
+          "task_not_found",
+          404,
+        );
       const task = TaskSchema.parse(taskRow);
       const tableRow = this.database
-        .prepare('SELECT * FROM tables WHERE task_id = ? AND slug = ?')
+        .prepare("SELECT * FROM tables WHERE task_id = ? AND slug = ?")
         .get(task.id, requested.table_slug);
       if (!tableRow) {
-        throw new DomainError(`Table '${requested.table_slug}' was not found`, 'table_not_found', 404);
+        throw new DomainError(
+          `Table '${requested.table_slug}' was not found`,
+          "table_not_found",
+          404,
+        );
       }
       const table = this.parseTable(tableRow);
-      if (run.mode !== 'production') {
-        throw new DomainError('Test runs cannot publish formal rows', 'test_publish_forbidden', 409);
+      if (run.mode !== "production") {
+        throw new DomainError(
+          "Test runs cannot publish formal rows",
+          "test_publish_forbidden",
+          409,
+        );
       }
-      if (!['authorized', 'running'].includes(run.status) || task.state !== 'production_running') {
-        throw new DomainError('Production run is not accepting batches', 'invalid_run_state', 409);
+      if (
+        !["authorized", "running"].includes(run.status) ||
+        task.state !== "production_running"
+      ) {
+        throw new DomainError(
+          "Production run is not accepting batches",
+          "invalid_run_state",
+          409,
+        );
       }
       const authorization = this.getProductionAuthorization({
         run_id: run.id,
@@ -1082,17 +1524,30 @@ export class WorkbookService {
         pipeline_hash: requested.pipeline_hash,
       });
       if (!authorization.authorized) {
-        const code = authorization.reason === 'approval_hash_mismatch' ? 'approval_hash_mismatch' : 'production_not_authorized';
-        throw new DomainError('Production authorization is not current', code, 409);
+        const code =
+          authorization.reason === "approval_hash_mismatch"
+            ? "approval_hash_mismatch"
+            : "production_not_authorized";
+        throw new DomainError(
+          "Production authorization is not current",
+          code,
+          409,
+        );
       }
 
       const existingRow = this.database
-        .prepare('SELECT * FROM run_batches WHERE run_id = ? AND table_id = ? AND batch_key = ?')
+        .prepare(
+          "SELECT * FROM run_batches WHERE run_id = ? AND table_id = ? AND batch_key = ?",
+        )
         .get(run.id, table.id, requested.batch_key);
       if (existingRow) {
         const existing = RunBatchSchema.parse(existingRow);
         if (existing.payload_hash !== payloadHash) {
-          throw new DomainError('Batch key already has a different payload', 'batch_key_conflict', 409);
+          throw new DomainError(
+            "Batch key already has a different payload",
+            "batch_key_conflict",
+            409,
+          );
         }
         return {
           run_id: run.id,
@@ -1112,17 +1567,29 @@ export class WorkbookService {
       const rows = requested.records.map((record) => {
         validateRecordData(schema, record.data);
         if (record.dedupe_key !== recordDedupeKey(schema, record.data)) {
-          throw new DomainError('Record dedupe key does not match its primary key', 'schema_validation_failed', 400);
+          throw new DomainError(
+            "Record dedupe key does not match its primary key",
+            "schema_validation_failed",
+            400,
+          );
         }
         if (seen.has(record.dedupe_key)) {
-          throw new DomainError('Batch contains a duplicate dedupe key', 'duplicate_dedupe_key', 409);
+          throw new DomainError(
+            "Batch contains a duplicate dedupe key",
+            "duplicate_dedupe_key",
+            409,
+          );
         }
         seen.add(record.dedupe_key);
         if (
-          (table.kind === 'source' && record.provenance.kind !== 'direct') ||
-          (table.kind === 'derived' && record.provenance.kind !== 'derived')
+          (table.kind === "source" && record.provenance.kind !== "direct") ||
+          (table.kind === "derived" && record.provenance.kind !== "derived")
         ) {
-          throw new DomainError('Record provenance does not match the table kind', 'schema_validation_failed', 400);
+          throw new DomainError(
+            "Record provenance does not match the table kind",
+            "schema_validation_failed",
+            400,
+          );
         }
         for (const parent of record.provenance.parents) {
           const parentRow = this.database
@@ -1134,16 +1601,30 @@ export class WorkbookService {
             )
             .get(task.id, parent.table_slug, run.id, parent.dedupe_key);
           if (!parentRow) {
-            throw new DomainError('Derived provenance parent was not published', 'schema_validation_failed', 400);
+            throw new DomainError(
+              "Derived provenance parent was not published",
+              "schema_validation_failed",
+              400,
+            );
           }
         }
 
-        const envelopeHash = hashJson({ data: record.data, provenance: record.provenance });
+        const envelopeHash = hashJson({
+          data: record.data,
+          provenance: record.provenance,
+        });
         const existing = this.database
-          .prepare('SELECT envelope_hash FROM table_rows WHERE table_id = ? AND run_id = ? AND dedupe_key = ?')
-          .get(table.id, run.id, record.dedupe_key) as { envelope_hash: string } | undefined;
+          .prepare(
+            "SELECT envelope_hash FROM table_rows WHERE table_id = ? AND run_id = ? AND dedupe_key = ?",
+          )
+          .get(table.id, run.id, record.dedupe_key) as
+          { envelope_hash: string } | undefined;
         if (existing && existing.envelope_hash !== envelopeHash) {
-          throw new DomainError('Existing row has different content', 'row_identity_conflict', 409);
+          throw new DomainError(
+            "Existing row has different content",
+            "row_identity_conflict",
+            409,
+          );
         }
         return { record, envelopeHash, duplicate: Boolean(existing) };
       });
@@ -1222,10 +1703,12 @@ export class WorkbookService {
         )
         .run(publishedRowCount, timestamp, timestamp, run.id);
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
         .run(
           task.workbook_id,
-          'table.batch_published',
+          "table.batch_published",
           JSON.stringify({
             run_id: run.id,
             table_id: table.id,
@@ -1256,26 +1739,59 @@ export class WorkbookService {
 
   recordArtifact(input: RecordArtifactInput) {
     const requested = RecordArtifactInputSchema.parse(input);
-    if (!requested.path.startsWith('artifacts/')) {
-      throw new DomainError('Artifacts must be stored under artifacts/', 'artifact_path_invalid', 400);
+    if (!requested.path.startsWith("artifacts/")) {
+      throw new DomainError(
+        "Artifacts must be stored under artifacts/",
+        "artifact_path_invalid",
+        400,
+      );
     }
     const scan = requested.metadata.scan;
-    if (!scan || typeof scan !== 'object' || Array.isArray(scan) || scan.status !== 'passed') {
-      throw new DomainError('Artifact requires a passed scan result', 'artifact_scan_required', 400);
+    if (
+      !scan ||
+      typeof scan !== "object" ||
+      Array.isArray(scan) ||
+      scan.status !== "passed"
+    ) {
+      throw new DomainError(
+        "Artifact requires a passed scan result",
+        "artifact_scan_required",
+        400,
+      );
     }
 
     const record = this.database.transaction(() => {
-      const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
-      if (!runRow) throw new DomainError(`Run '${requested.run_id}' was not found`, 'run_not_found', 404);
+      const runRow = this.database
+        .prepare("SELECT * FROM runs WHERE id = ?")
+        .get(requested.run_id);
+      if (!runRow)
+        throw new DomainError(
+          `Run '${requested.run_id}' was not found`,
+          "run_not_found",
+          404,
+        );
       const run = this.parseRun(runRow);
-      const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(run.task_id);
-      if (!taskRow) throw new DomainError(`Task '${run.task_id}' was not found`, 'task_not_found', 404);
+      const taskRow = this.database
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get(run.task_id);
+      if (!taskRow)
+        throw new DomainError(
+          `Task '${run.task_id}' was not found`,
+          "task_not_found",
+          404,
+        );
       const task = TaskSchema.parse(taskRow);
-      const existingRow = this.database.prepare('SELECT * FROM artifacts WHERE run_id = ? AND path = ?').get(run.id, requested.path);
+      const existingRow = this.database
+        .prepare("SELECT * FROM artifacts WHERE run_id = ? AND path = ?")
+        .get(run.id, requested.path);
       if (existingRow) {
         const existing = this.parseArtifact(existingRow);
         if (existing.sha256 !== requested.sha256) {
-          throw new DomainError('Artifact path already has different content', 'artifact_identity_conflict', 409);
+          throw new DomainError(
+            "Artifact path already has different content",
+            "artifact_identity_conflict",
+            409,
+          );
         }
         return { ...existing, download_available: true };
       }
@@ -1285,16 +1801,31 @@ export class WorkbookService {
         run.schema_hash !== requested.schema_hash ||
         run.pipeline_hash !== requested.pipeline_hash
       ) {
-        throw new DomainError('Artifact hashes do not match the run', 'approval_hash_mismatch', 409);
+        throw new DomainError(
+          "Artifact hashes do not match the run",
+          "approval_hash_mismatch",
+          409,
+        );
       }
       const turn = this.database
-        .prepare('SELECT 1 FROM trueforge_turns WHERE id = ? AND workbook_id = ?')
+        .prepare(
+          "SELECT 1 FROM trueforge_turns WHERE id = ? AND workbook_id = ?",
+        )
         .get(requested.trueforge_turn_id, task.workbook_id);
-      if (!turn) throw new DomainError('Artifact turn does not belong to the workbook', 'turn_not_in_workbook', 409);
+      if (!turn)
+        throw new DomainError(
+          "Artifact turn does not belong to the workbook",
+          "turn_not_in_workbook",
+          409,
+        );
 
-      if (run.mode === 'production') {
-        if (!['running', 'finalizing'].includes(run.status)) {
-          throw new DomainError('Production run is not ready for artifacts', 'invalid_run_state', 409);
+      if (run.mode === "production") {
+        if (!["running", "finalizing"].includes(run.status)) {
+          throw new DomainError(
+            "Production run is not ready for artifacts",
+            "invalid_run_state",
+            409,
+          );
         }
         const authorization = this.getProductionAuthorization({
           run_id: run.id,
@@ -1303,8 +1834,15 @@ export class WorkbookService {
           pipeline_hash: requested.pipeline_hash,
         });
         if (!authorization.authorized) {
-          const code = authorization.reason === 'approval_hash_mismatch' ? 'approval_hash_mismatch' : 'production_not_authorized';
-          throw new DomainError('Production authorization is not current', code, 409);
+          const code =
+            authorization.reason === "approval_hash_mismatch"
+              ? "approval_hash_mismatch"
+              : "production_not_authorized";
+          throw new DomainError(
+            "Production authorization is not current",
+            code,
+            409,
+          );
         }
         const sourceRows = this.database
           .prepare(
@@ -1313,8 +1851,15 @@ export class WorkbookService {
              WHERE tables.task_id = ? AND tables.kind = 'source'`,
           )
           .get(run.id, task.id);
-        if (!sourceRows || Number((sourceRows as { count: number }).count) === 0) {
-          throw new DomainError('At least one source row must be published', 'run_completion_incomplete', 409);
+        if (
+          !sourceRows ||
+          Number((sourceRows as { count: number }).count) === 0
+        ) {
+          throw new DomainError(
+            "At least one source row must be published",
+            "run_completion_incomplete",
+            409,
+          );
         }
       }
 
@@ -1350,16 +1895,31 @@ export class WorkbookService {
           canonicalJson(artifact.metadata),
           artifact.created_at,
         );
-      if (run.mode === 'production' && run.status === 'running') {
-        this.database.prepare("UPDATE runs SET status = 'finalizing', updated_at = ? WHERE id = ?").run(timestamp, run.id);
-        this.database.prepare("UPDATE tasks SET state = 'finalizing', updated_at = ? WHERE id = ?").run(timestamp, task.id);
+      if (run.mode === "production" && run.status === "running") {
+        this.database
+          .prepare(
+            "UPDATE runs SET status = 'finalizing', updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, run.id);
+        this.database
+          .prepare(
+            "UPDATE tasks SET state = 'finalizing', updated_at = ? WHERE id = ?",
+          )
+          .run(timestamp, task.id);
       }
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
         .run(
           task.workbook_id,
-          'artifact.recorded',
-          JSON.stringify({ artifact_id: artifact.id, run_id: run.id, kind: artifact.kind, path: artifact.path }),
+          "artifact.recorded",
+          JSON.stringify({
+            artifact_id: artifact.id,
+            run_id: run.id,
+            kind: artifact.kind,
+            path: artifact.path,
+          }),
           timestamp,
         );
       return { ...artifact, download_available: true };
@@ -1370,15 +1930,29 @@ export class WorkbookService {
 
   completeRun(input: CompleteRunInput) {
     const requested = CompleteRunInputSchema.parse(input);
-    const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
-    if (!runRow) throw new DomainError(`Run '${requested.run_id}' was not found`, 'run_not_found', 404);
+    const runRow = this.database
+      .prepare("SELECT * FROM runs WHERE id = ?")
+      .get(requested.run_id);
+    if (!runRow)
+      throw new DomainError(
+        `Run '${requested.run_id}' was not found`,
+        "run_not_found",
+        404,
+      );
 
     const run = this.parseRun(runRow);
-    const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(run.task_id);
-    if (!taskRow) throw new DomainError(`Task '${run.task_id}' was not found`, 'task_not_found', 404);
+    const taskRow = this.database
+      .prepare("SELECT * FROM tasks WHERE id = ?")
+      .get(run.task_id);
+    if (!taskRow)
+      throw new DomainError(
+        `Task '${run.task_id}' was not found`,
+        "task_not_found",
+        404,
+      );
     const task = TaskSchema.parse(taskRow);
     const tables = this.database
-      .prepare('SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal')
+      .prepare("SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal")
       .all(task.id)
       .map((table) => this.parseTable(table));
 
@@ -1389,12 +1963,17 @@ export class WorkbookService {
       task.task_hash !== run.task_hash ||
       aggregateSchemaHash(tables) !== run.schema_hash
     ) {
-      throw new DomainError('Run hashes do not match the current task and schemas', 'hashes_not_current', 409);
+      throw new DomainError(
+        "Run hashes do not match the current task and schemas",
+        "hashes_not_current",
+        409,
+      );
     }
-    if (['completed', 'failed', 'cancelled'].includes(run.status)) {
+    if (["completed", "failed", "cancelled"].includes(run.status)) {
       if (
         run.status === requested.outcome &&
-        canonicalJson(run.test_manifest) === canonicalJson(requested.manifest) &&
+        canonicalJson(run.test_manifest) ===
+          canonicalJson(requested.manifest) &&
         canonicalJson(run.test_samples) === canonicalJson(requested.samples) &&
         canonicalJson(run.error) === canonicalJson(requested.error)
       ) {
@@ -1405,22 +1984,34 @@ export class WorkbookService {
           task_state: task.state,
           counts: run.test_manifest?.counts ?? {},
           next_action:
-            run.mode === 'test' && run.status === 'completed'
-              ? 'ask_production_review'
-              : run.mode === 'production' && run.status === 'completed'
-                ? 'offer_skill_promotion'
-                : 'none',
+            run.mode === "test" && run.status === "completed"
+              ? "ask_production_review"
+              : run.mode === "production" && run.status === "completed"
+                ? "offer_skill_promotion"
+                : "none",
         };
       }
-      throw new DomainError('Run already has a different terminal result', 'terminal_run_conflict', 409);
+      throw new DomainError(
+        "Run already has a different terminal result",
+        "terminal_run_conflict",
+        409,
+      );
     }
 
-    if (run.mode === 'production') {
-      if (!['authorized', 'running', 'finalizing'].includes(run.status)) {
-        throw new DomainError('Production run cannot complete from its current state', 'invalid_run_state', 409);
+    if (run.mode === "production") {
+      if (!["authorized", "running", "finalizing"].includes(run.status)) {
+        throw new DomainError(
+          "Production run cannot complete from its current state",
+          "invalid_run_state",
+          409,
+        );
       }
       if (Object.keys(requested.samples).length !== 0) {
-        throw new DomainError('Production completion cannot contain review samples', 'run_completion_incomplete', 409);
+        throw new DomainError(
+          "Production completion cannot contain review samples",
+          "run_completion_incomplete",
+          409,
+        );
       }
 
       const countRows = this.database
@@ -1431,17 +2022,25 @@ export class WorkbookService {
            WHERE tables.task_id = ?
            GROUP BY tables.id ORDER BY tables.ordinal`,
         )
-        .all(run.id, task.id) as Array<{ slug: string; kind: 'source' | 'derived'; count: number }>;
-      const tableCounts = Object.fromEntries(countRows.map((row) => [row.slug, row.count]));
+        .all(run.id, task.id) as Array<{
+        slug: string;
+        kind: "source" | "derived";
+        count: number;
+      }>;
+      const tableCounts = Object.fromEntries(
+        countRows.map((row) => [row.slug, row.count]),
+      );
       const totalRecords = countRows.reduce((sum, row) => sum + row.count, 0);
       const sourceRecords = countRows
-        .filter((row) => row.kind === 'source')
+        .filter((row) => row.kind === "source")
         .reduce((sum, row) => sum + row.count, 0);
       const derivedRecords = totalRecords - sourceRecords;
-      const artifactRows = this.database.prepare('SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at').all(run.id);
-      let nextTaskState: 'completed' | 'failed' | 'cancelled';
+      const artifactRows = this.database
+        .prepare("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at")
+        .all(run.id);
+      let nextTaskState: "completed" | "failed" | "cancelled";
 
-      if (requested.outcome === 'completed') {
+      if (requested.outcome === "completed") {
         const authorization = this.getProductionAuthorization({
           run_id: run.id,
           task_hash: requested.task_hash,
@@ -1452,31 +2051,36 @@ export class WorkbookService {
         const manifestTables = requested.manifest.tables;
         if (
           !authorization.authorized ||
-          run.status !== 'finalizing' ||
-          task.state !== 'finalizing' ||
+          run.status !== "finalizing" ||
+          task.state !== "finalizing" ||
           requested.error !== null ||
           requested.manifest.ok !== true ||
-          requested.manifest.command !== 'finalize' ||
+          requested.manifest.command !== "finalize" ||
           requested.manifest.run_id !== run.id ||
-          requested.manifest.mode !== 'production' ||
-          requested.manifest.state !== 'ready_to_finalize' ||
+          requested.manifest.mode !== "production" ||
+          requested.manifest.state !== "ready_to_finalize" ||
           requested.manifest.task_hash !== run.task_hash ||
           requested.manifest.schema_hash !== run.schema_hash ||
           requested.manifest.pipeline_hash !== run.pipeline_hash ||
           requested.manifest.done !== true ||
           requested.manifest.error !== null ||
           !manifestCounts ||
-          typeof manifestCounts !== 'object' ||
+          typeof manifestCounts !== "object" ||
           Array.isArray(manifestCounts) ||
           !manifestTables ||
-          typeof manifestTables !== 'object' ||
+          typeof manifestTables !== "object" ||
           Array.isArray(manifestTables) ||
-          canonicalJson(requested.table_counts) !== canonicalJson(tableCounts) ||
+          canonicalJson(requested.table_counts) !==
+            canonicalJson(tableCounts) ||
           run.published_row_count !== totalRecords ||
           sourceRecords === 0 ||
           artifactRows.length === 0
         ) {
-          throw new DomainError('Production result is incomplete or stale', 'run_completion_incomplete', 409);
+          throw new DomainError(
+            "Production result is incomplete or stale",
+            "run_completion_incomplete",
+            409,
+          );
         }
 
         const counts = manifestCounts as Record<string, unknown>;
@@ -1484,22 +2088,36 @@ export class WorkbookService {
         if (
           counts.source_records !== sourceRecords ||
           counts.derived_records !== derivedRecords ||
-          canonicalJson(Object.keys(tableManifests).sort()) !== canonicalJson(Object.keys(tableCounts).sort()) ||
+          canonicalJson(Object.keys(tableManifests).sort()) !==
+            canonicalJson(Object.keys(tableCounts).sort()) ||
           countRows.some((row) => {
             const item = tableManifests[row.slug];
-            return !item || typeof item !== 'object' || Array.isArray(item) || (item as Record<string, unknown>).count !== row.count;
+            return (
+              !item ||
+              typeof item !== "object" ||
+              Array.isArray(item) ||
+              (item as Record<string, unknown>).count !== row.count
+            );
           })
         ) {
-          throw new DomainError('Production manifest does not match formal rows', 'run_completion_incomplete', 409);
+          throw new DomainError(
+            "Production manifest does not match formal rows",
+            "run_completion_incomplete",
+            409,
+          );
         }
-        nextTaskState = 'completed';
-      } else if (requested.outcome === 'failed') {
+        nextTaskState = "completed";
+      } else if (requested.outcome === "failed") {
         if (requested.error === null) {
-          throw new DomainError('A failed run requires a portable error', 'run_completion_incomplete', 409);
+          throw new DomainError(
+            "A failed run requires a portable error",
+            "run_completion_incomplete",
+            409,
+          );
         }
-        nextTaskState = 'failed';
+        nextTaskState = "failed";
       } else {
-        nextTaskState = 'cancelled';
+        nextTaskState = "cancelled";
       }
 
       const timestamp = new Date().toISOString();
@@ -1522,14 +2140,20 @@ export class WorkbookService {
             run.id,
           );
         this.database
-          .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
+          .prepare("UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?")
           .run(nextTaskState, timestamp, task.id);
         this.database
-          .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+          .prepare(
+            "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+          )
           .run(
             task.workbook_id,
             `run.${requested.outcome}`,
-            JSON.stringify({ run_id: run.id, task_state: nextTaskState, table_counts: tableCounts }),
+            JSON.stringify({
+              run_id: run.id,
+              task_state: nextTaskState,
+              table_counts: tableCounts,
+            }),
             timestamp,
           );
       });
@@ -1542,38 +2166,48 @@ export class WorkbookService {
         task_state: nextTaskState,
         counts: tableCounts,
         artifact_ids: artifactRows.map((row) => this.parseArtifact(row).id),
-        next_action: requested.outcome === 'completed' ? 'offer_skill_promotion' : 'none',
+        next_action:
+          requested.outcome === "completed" ? "offer_skill_promotion" : "none",
       };
     }
 
-    if (run.status !== 'running' || task.state !== 'testing') {
-      throw new DomainError(`Test run cannot complete while task is '${task.state}'`, 'invalid_task_state', 409);
+    if (run.status !== "running" || task.state !== "testing") {
+      throw new DomainError(
+        `Test run cannot complete while task is '${task.state}'`,
+        "invalid_task_state",
+        409,
+      );
     }
 
-    let nextTaskState: 'awaiting_production_confirmation' | 'building' | 'cancelled';
-    if (requested.outcome === 'completed') {
+    let nextTaskState:
+      "awaiting_production_confirmation" | "building" | "cancelled";
+    if (requested.outcome === "completed") {
       const manifestCounts = requested.manifest.counts;
       const manifestTables = requested.manifest.tables;
       if (
         requested.error !== null ||
         requested.manifest.ok !== true ||
-        requested.manifest.command !== 'test' ||
+        requested.manifest.command !== "test" ||
         requested.manifest.run_id !== run.id ||
-        requested.manifest.mode !== 'test' ||
-        requested.manifest.state !== 'ready_to_finalize' ||
+        requested.manifest.mode !== "test" ||
+        requested.manifest.state !== "ready_to_finalize" ||
         requested.manifest.task_hash !== run.task_hash ||
         requested.manifest.schema_hash !== run.schema_hash ||
         requested.manifest.pipeline_hash !== run.pipeline_hash ||
         requested.manifest.done !== true ||
         requested.manifest.error !== null ||
         !manifestCounts ||
-        typeof manifestCounts !== 'object' ||
+        typeof manifestCounts !== "object" ||
         Array.isArray(manifestCounts) ||
         !manifestTables ||
-        typeof manifestTables !== 'object' ||
+        typeof manifestTables !== "object" ||
         Array.isArray(manifestTables)
       ) {
-        throw new DomainError('Test manifest is incomplete or stale', 'run_completion_incomplete', 409);
+        throw new DomainError(
+          "Test manifest is incomplete or stale",
+          "run_completion_incomplete",
+          409,
+        );
       }
 
       const samples = requested.samples;
@@ -1587,17 +2221,36 @@ export class WorkbookService {
 
       for (const table of tables) {
         const tableManifest = tableManifests[table.slug];
-        if (!tableManifest || typeof tableManifest !== 'object' || Array.isArray(tableManifest)) {
-          throw new DomainError('Test table manifest is incomplete', 'run_completion_incomplete', 409);
+        if (
+          !tableManifest ||
+          typeof tableManifest !== "object" ||
+          Array.isArray(tableManifest)
+        ) {
+          throw new DomainError(
+            "Test table manifest is incomplete",
+            "run_completion_incomplete",
+            409,
+          );
         }
         const recordCount = (tableManifest as Record<string, unknown>).count;
         if (!Number.isInteger(recordCount) || Number(recordCount) < 0) {
-          throw new DomainError('Test table count is invalid', 'run_completion_incomplete', 409);
+          throw new DomainError(
+            "Test table count is invalid",
+            "run_completion_incomplete",
+            409,
+          );
         }
-        if ((samples[table.slug]?.length ?? 0) !== Math.min(Number(recordCount), MAX_TEST_SAMPLE_RECORDS_PER_TABLE)) {
-          throw new DomainError('Test samples do not match table counts', 'run_completion_incomplete', 409);
+        if (
+          (samples[table.slug]?.length ?? 0) !==
+          Math.min(Number(recordCount), MAX_TEST_SAMPLE_RECORDS_PER_TABLE)
+        ) {
+          throw new DomainError(
+            "Test samples do not match table counts",
+            "run_completion_incomplete",
+            409,
+          );
         }
-        if (table.kind === 'source') sourceRecords += Number(recordCount);
+        if (table.kind === "source") sourceRecords += Number(recordCount);
         else derivedRecords += Number(recordCount);
       }
 
@@ -1608,19 +2261,34 @@ export class WorkbookService {
         counts.derived_records !== derivedRecords ||
         sourceRecords !== 5
       ) {
-        throw new DomainError('Test samples do not match the manifest', 'run_completion_incomplete', 409);
+        throw new DomainError(
+          "Test samples do not match the manifest",
+          "run_completion_incomplete",
+          409,
+        );
       }
-      if (run.published_row_count !== 0 || Object.keys(requested.table_counts).length !== 0) {
-        throw new DomainError('Test runs cannot contain formal rows', 'test_rows_contaminated', 409);
+      if (
+        run.published_row_count !== 0 ||
+        Object.keys(requested.table_counts).length !== 0
+      ) {
+        throw new DomainError(
+          "Test runs cannot contain formal rows",
+          "test_rows_contaminated",
+          409,
+        );
       }
-      nextTaskState = 'awaiting_production_confirmation';
-    } else if (requested.outcome === 'failed') {
+      nextTaskState = "awaiting_production_confirmation";
+    } else if (requested.outcome === "failed") {
       if (requested.error === null) {
-        throw new DomainError('A failed run requires a portable error', 'run_completion_incomplete', 409);
+        throw new DomainError(
+          "A failed run requires a portable error",
+          "run_completion_incomplete",
+          409,
+        );
       }
-      nextTaskState = 'building';
+      nextTaskState = "building";
     } else {
-      nextTaskState = 'cancelled';
+      nextTaskState = "cancelled";
     }
 
     const timestamp = new Date().toISOString();
@@ -1642,10 +2310,12 @@ export class WorkbookService {
           run.id,
         );
       this.database
-        .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
+        .prepare("UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?")
         .run(nextTaskState, timestamp, task.id);
       this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .prepare(
+          "INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+        )
         .run(
           task.workbook_id,
           `run.${requested.outcome}`,
@@ -1661,17 +2331,17 @@ export class WorkbookService {
       task_state: nextTaskState,
       counts: requested.manifest.counts ?? {},
       next_action:
-        requested.outcome === 'completed'
-          ? 'ask_production_review'
-          : requested.outcome === 'failed'
-            ? 'revise_pipeline'
-            : 'none',
+        requested.outcome === "completed"
+          ? "ask_production_review"
+          : requested.outcome === "failed"
+            ? "revise_pipeline"
+            : "none",
     };
   }
 
   getSnapshot(workbookId: string) {
     const taskRows = this.database
-      .prepare('SELECT * FROM tasks WHERE workbook_id = ? ORDER BY created_at')
+      .prepare("SELECT * FROM tasks WHERE workbook_id = ? ORDER BY created_at")
       .all(workbookId);
     const tableRows = this.database
       .prepare(
@@ -1713,23 +2383,125 @@ export class WorkbookService {
 
     return WorkbookSnapshotSchema.parse({
       workbook: this.getWorkbook(workbookId),
-      tasks: taskRows.map(row => TaskSchema.parse(row)),
+      tasks: taskRows.map((row) => TaskSchema.parse(row)),
       tables: tableRows.map((row) => this.parseTable(row)),
       runs: runRows.map((row) => this.parseRun(row)),
-      pending_question: pendingQuestionRow ? this.parseAgentQuestion(pendingQuestionRow) : null,
+      pending_question: pendingQuestionRow
+        ? this.parseAgentQuestion(pendingQuestionRow)
+        : null,
       artifacts: artifactRows.map((row) => this.parseArtifact(row)),
       generated_skills: [],
-      table_counts: Object.fromEntries(countRows.map((row) => [row.id, row.count])),
+      table_counts: Object.fromEntries(
+        countRows.map((row) => [row.id, row.count]),
+      ),
     });
   }
 
-  private questionForAnswer(workbookId: string, toolCallId: string, input: AnswerQuestionInput) {
+  getTableRows(
+    tableId: string,
+    runId: string,
+    after: string | undefined,
+    limit: number,
+  ) {
+    const tableRow = this.database
+      .prepare("SELECT * FROM tables WHERE id = ?")
+      .get(tableId);
+    if (!tableRow)
+      throw new DomainError(
+        `Table '${tableId}' was not found`,
+        "table_not_found",
+        404,
+      );
+    const table = this.parseTable(tableRow);
+
+    const runRow = this.database
+      .prepare("SELECT * FROM runs WHERE id = ?")
+      .get(runId);
+    if (!runRow)
+      throw new DomainError(
+        `Run '${runId}' was not found`,
+        "run_not_found",
+        404,
+      );
+    const run = this.parseRun(runRow);
+    if (run.task_id !== table.task_id) {
+      throw new DomainError(
+        "Table and run do not belong to the same task",
+        "table_run_mismatch",
+        409,
+      );
+    }
+
+    let afterCreatedAt: string | null = null;
+    let afterId: string | null = null;
+    if (after !== undefined) {
+      const separator = after.indexOf("|");
+      if (separator <= 0 || separator === after.length - 1) {
+        throw new DomainError("Row cursor is invalid", "invalid_cursor", 400);
+      }
+      afterCreatedAt = after.slice(0, separator);
+      afterId = after.slice(separator + 1);
+    }
+
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM table_rows
+         WHERE table_id = ? AND run_id = ?
+           AND (
+             ? IS NULL OR created_at > ?
+             OR (created_at = ? AND id > ?)
+           )
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?`,
+      )
+      .all(
+        table.id,
+        run.id,
+        afterCreatedAt,
+        afterCreatedAt,
+        afterCreatedAt,
+        afterId,
+        limit + 1,
+      ) as Array<Record<string, unknown>>;
+    const page = rows.slice(0, limit).map((row) => {
+      const {
+        data_json: dataJson,
+        provenance_json: provenanceJson,
+        ...stored
+      } = row;
+      return TableRowSchema.parse({
+        ...stored,
+        data: JSON.parse(String(dataJson)) as unknown,
+        provenance: JSON.parse(String(provenanceJson)) as unknown,
+      });
+    });
+    const last = page.at(-1);
+    return {
+      table_id: table.id,
+      run_id: run.id,
+      rows: page,
+      next_cursor:
+        rows.length > limit && last ? `${last.created_at}|${last.id}` : null,
+    };
+  }
+
+  private questionForAnswer(
+    workbookId: string,
+    toolCallId: string,
+    input: AnswerQuestionInput,
+  ) {
     const answer = AnswerQuestionInputSchema.parse(input);
     const row = this.database
-      .prepare('SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?')
+      .prepare(
+        "SELECT * FROM agent_questions WHERE workbook_id = ? AND tool_call_id = ?",
+      )
       .get(workbookId, toolCallId);
     if (!row) {
-      throw new DomainError('The requested question is not pending', 'question_not_found', 404);
+      throw new DomainError(
+        "The requested question is not pending",
+        "question_not_found",
+        404,
+      );
     }
     const question = this.parseAgentQuestion(row);
     if (
@@ -1737,21 +2509,29 @@ export class WorkbookService {
       question.question_turn_id !== answer.question_turn_id ||
       question.thread_id !== answer.thread_id ||
       question.gate_kind !== answer.gate_kind ||
-      (answer.related_run_id !== undefined && question.run_id !== answer.related_run_id)
+      (answer.related_run_id !== undefined &&
+        question.run_id !== answer.related_run_id)
     ) {
-      throw new DomainError('Question identifiers do not match the pending action', 'question_identity_mismatch', 409);
+      throw new DomainError(
+        "Question identifiers do not match the pending action",
+        "question_identity_mismatch",
+        409,
+      );
     }
     return question;
   }
 
   private getQuestion(id: string): AgentQuestion {
-    const row = this.database.prepare('SELECT * FROM agent_questions WHERE id = ?').get(id);
-    if (!row) throw new Error('Question was not persisted');
+    const row = this.database
+      .prepare("SELECT * FROM agent_questions WHERE id = ?")
+      .get(id);
+    if (!row) throw new Error("Question was not persisted");
     return this.parseAgentQuestion(row);
   }
 
   private parseTrueForgeTurn(row: unknown) {
-    if (!row || typeof row !== 'object') throw new Error('TrueForge turn was not persisted');
+    if (!row || typeof row !== "object")
+      throw new Error("TrueForge turn was not persisted");
     const stored = row as Record<string, unknown>;
     return TrueForgeTurnSchema.parse({
       id: stored.id,
@@ -1759,7 +2539,9 @@ export class WorkbookService {
       previous_turn_id: stored.previous_turn_id,
       status: stored.status,
       last_sequence_number: stored.last_sequence_number,
-      required_actions: JSON.parse(String(stored.required_actions_json)) as unknown,
+      required_actions: JSON.parse(
+        String(stored.required_actions_json),
+      ) as unknown,
       started_at: stored.started_at,
       finished_at: stored.finished_at,
       updated_at: stored.updated_at,
@@ -1767,8 +2549,12 @@ export class WorkbookService {
   }
 
   private parseAgentQuestion(row: unknown) {
-    if (!row || typeof row !== 'object') throw new Error('Question was not persisted');
-    const { options_json: optionsJson, ...stored } = row as Record<string, unknown>;
+    if (!row || typeof row !== "object")
+      throw new Error("Question was not persisted");
+    const { options_json: optionsJson, ...stored } = row as Record<
+      string,
+      unknown
+    >;
     return AgentQuestionSchema.parse({
       ...stored,
       options: JSON.parse(String(optionsJson)) as unknown,
@@ -1776,8 +2562,12 @@ export class WorkbookService {
   }
 
   private parseTable(row: unknown) {
-    if (!row || typeof row !== 'object') throw new Error('Table was not persisted');
-    const { schema_json: schemaJson, ...stored } = row as Record<string, unknown>;
+    if (!row || typeof row !== "object")
+      throw new Error("Table was not persisted");
+    const { schema_json: schemaJson, ...stored } = row as Record<
+      string,
+      unknown
+    >;
     return TableSchema.parse({
       ...stored,
       schema: JSON.parse(String(schemaJson)) as unknown,
@@ -1785,8 +2575,12 @@ export class WorkbookService {
   }
 
   private parseArtifact(row: unknown) {
-    if (!row || typeof row !== 'object') throw new Error('Artifact was not persisted');
-    const { metadata_json: metadataJson, ...stored } = row as Record<string, unknown>;
+    if (!row || typeof row !== "object")
+      throw new Error("Artifact was not persisted");
+    const { metadata_json: metadataJson, ...stored } = row as Record<
+      string,
+      unknown
+    >;
     return ArtifactSchema.parse({
       ...stored,
       metadata: JSON.parse(String(metadataJson)) as unknown,
@@ -1794,7 +2588,8 @@ export class WorkbookService {
   }
 
   private parseRun(row: unknown) {
-    if (!row || typeof row !== 'object') throw new Error('Run was not persisted');
+    if (!row || typeof row !== "object")
+      throw new Error("Run was not persisted");
     const {
       test_manifest_json: testManifestJson,
       test_samples_json: testSamplesJson,
@@ -1803,13 +2598,17 @@ export class WorkbookService {
     } = row as Record<string, unknown>;
     return RunSchema.parse({
       ...stored,
-      test_manifest: testManifestJson ? JSON.parse(String(testManifestJson)) : null,
-      test_samples: testSamplesJson ? JSON.parse(String(testSamplesJson)) : null,
+      test_manifest: testManifestJson
+        ? JSON.parse(String(testManifestJson))
+        : null,
+      test_samples: testSamplesJson
+        ? JSON.parse(String(testSamplesJson))
+        : null,
       error: errorJson ? JSON.parse(String(errorJson)) : null,
     });
   }
 
-  private runResult(run: ReturnType<WorkbookService['parseRun']>) {
+  private runResult(run: ReturnType<WorkbookService["parseRun"]>) {
     return StartRunDataSchema.parse({
       run_id: run.id,
       mode: run.mode,
@@ -1819,7 +2618,8 @@ export class WorkbookService {
         schema: run.schema_hash,
         pipeline: run.pipeline_hash,
       },
-      next_action: run.mode === 'test' ? 'execute_test' : 'ask_production_review',
+      next_action:
+        run.mode === "test" ? "execute_test" : "ask_production_review",
     });
   }
 }

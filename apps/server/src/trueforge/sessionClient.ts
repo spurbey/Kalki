@@ -10,6 +10,8 @@ const coordinatorInstructions = [
   "You are the Kalki workbook coordinator.",
   "Read the framework skill before authoring task files or workflow code.",
   "Use workbook MCP for every durable product change.",
+  "Narrate each stage and major tool action with a short user-facing intent or observation.",
+  "Summarize reasoning without exposing private chain-of-thought.",
   "Use ask_user_question for task, schema, production, and skill-promotion review.",
   "Never treat silence, timeout, tool approval, or auto-continue as user consent.",
   "Keep raw rows in files and return compact manifests only.",
@@ -52,12 +54,20 @@ export class TrueForgeClient {
     }
   }
 
-  async createSession(): Promise<string> {
+  async createSession(workbook: {
+    id: string;
+    title: string;
+  }): Promise<string> {
     if (!this.options.model) throw new Error("KALKI_AGENT_MODEL must be set");
 
     const spec = {
       model: { name: this.options.model },
-      instructions: coordinatorInstructions,
+      instructions: [
+        coordinatorInstructions,
+        `This session is bound to Kalki workbook ${workbook.id} (${workbook.title}).`,
+        `Pass workbook_id=${workbook.id} to workbook MCP tools and never guess another workbook id.`,
+        "Call get_workbook_context with that workbook id before starting or resuming a stage.",
+      ].join("\n"),
       mcp_servers: [
         {
           name: "kalki-workbook",
@@ -129,7 +139,10 @@ export class TrueForgeClient {
     sessionId: string,
     turnId: string,
     afterSequenceNumber: number,
-    onEvent: (event: TrueForgeStreamEvent, sequenceNumber: number) => Promise<void>,
+    onEvent: (
+      event: TrueForgeStreamEvent,
+      sequenceNumber: number,
+    ) => Promise<void>,
   ): Promise<void> {
     let cursor = afterSequenceNumber;
     let failures = 0;
@@ -162,7 +175,9 @@ export class TrueForgeClient {
           if (dataLines.length === 0) return;
           const sequenceNumber = Number(eventId);
           if (!Number.isInteger(sequenceNumber) || sequenceNumber <= cursor) {
-            throw new Error("TrueForge turn stream returned an invalid sequence id");
+            throw new Error(
+              "TrueForge turn stream returned an invalid sequence id",
+            );
           }
           const event = TrueForgeStreamEventSchema.parse(
             JSON.parse(dataLines.join("\n")),
@@ -221,7 +236,9 @@ export class TrueForgeClient {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         return false;
       }
-      return (value as Record<string, unknown>).type === "tool.response_required";
+      return (
+        (value as Record<string, unknown>).type === "tool.response_required"
+      );
     });
     if (!action || typeof action !== "object" || Array.isArray(action)) {
       return null;
@@ -237,7 +254,9 @@ export class TrueForgeClient {
 
     const ref = refs[0];
     if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
-      throw new Error("TrueForge question action included an invalid tool call");
+      throw new Error(
+        "TrueForge question action included an invalid tool call",
+      );
     }
     const toolCall = ref as Record<string, unknown>;
     const toolCallId = IdSchema.parse(toolCall.id);
@@ -278,7 +297,9 @@ export class TrueForgeClient {
       typeof functionCall !== "object" ||
       Array.isArray(functionCall)
     ) {
-      throw new Error("TrueForge required action was not an ask_user_question call");
+      throw new Error(
+        "TrueForge required action was not an ask_user_question call",
+      );
     }
 
     const rawArguments = (functionCall as Record<string, unknown>).arguments;
@@ -304,7 +325,9 @@ export class TrueForgeClient {
       !Array.isArray(options) ||
       options.some((value) => typeof value !== "string")
     ) {
-      throw new Error("TrueForge question arguments were missing question options");
+      throw new Error(
+        "TrueForge question arguments were missing question options",
+      );
     }
 
     return {
