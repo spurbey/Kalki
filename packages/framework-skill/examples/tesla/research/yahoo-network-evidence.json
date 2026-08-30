@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "page_url": "https://finance.yahoo.com/quote/TSLA/history/",
+  "endpoint": "https://query1.finance.yahoo.com/v8/finance/chart/TSLA",
+  "method": "GET",
+  "parameters": ["period1", "period2", "interval=1d", "events=history", "includeAdjustedClose=true"],
+  "response_paths": [
+    "chart.result[0].meta",
+    "chart.result[0].timestamp",
+    "chart.result[0].indicators.quote[0]",
+    "chart.result[0].indicators.adjclose[0].adjclose"
+  ]
+}

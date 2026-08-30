@@ -1,0 +1,40 @@
+version: 1
+table:
+  slug: tesla-top-3
+  name: Tesla Highest Daily Prices
+  kind: derived
+  description: The three TSLA trading days with the highest daily high.
+  primary_key:
+    - rank
+columns:
+  - name: rank
+    type: integer
+    nullable: false
+    minimum: 1
+    maximum: 3
+    description: Position after deterministic sorting.
+  - name: date
+    type: date
+    nullable: false
+    description: Trading date in the exchange timezone.
+  - name: high
+    type: number
+    nullable: false
+    description: Daily high used for ranking.
+  - name: volume
+    type: integer
+    nullable: false
+    minimum: 0
+    description: Trading volume for the selected day.
+  - name: open
+    type: number
+    nullable: false
+    description: Opening price.
+  - name: close
+    type: number
+    nullable: false
+    description: Closing price.
+  - name: currency
+    type: string
+    nullable: false
+    description: Currency reported by Yahoo.

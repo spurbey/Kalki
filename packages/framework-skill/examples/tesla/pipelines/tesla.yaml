@@ -1,0 +1,38 @@
+version: 1
+pipeline:
+  slug: tesla-top-prices
+  name: Tesla history and highest daily prices
+  task_path: task.md
+  support_paths: []
+source:
+  id: collect-yahoo-history
+  table: tesla-history
+  schema_path: schemas/tesla-history.yaml
+  operator: operators/yahoo_tesla_history.py:YahooTeslaHistorySource
+  config:
+    symbol: TSLA
+    start_date: "2025-01-01"
+    interval: 1d
+    endpoint: https://query1.finance.yahoo.com/v8/finance/chart/TSLA
+transforms:
+  - id: select-top-three
+    input_table: tesla-history
+    output_table: tesla-top-3
+    schema_path: schemas/tesla-top-3.yaml
+    transformer: operators/tesla_top_three.py:TeslaTopThreeTransformer
+    config:
+      count: 3
+      order_by:
+        - field: high
+          direction: desc
+        - field: date
+          direction: asc
+execution:
+  test_limit: 5
+  publication_batch_size: 50
+  request_timeout_seconds: 30
+  request_max_attempts: 1
+  request_backoff_seconds: []
+  max_response_bytes: 10000000
+  allowed_hosts:
+    - query1.finance.yahoo.com
