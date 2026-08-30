@@ -14,7 +14,7 @@ description: Build reviewed web-research workflows that keep raw data in files a
 - Keep full records in JSONL files. Return only compact manifests and bounded review samples.
 - Only the root coordinator asks the user questions or interprets an answer.
 - Call `get_workbook_context` at the start of each stage and after compaction or recovery.
-- Inspect the workbook MCP tool list before calling a command. The current slice implements `get_workbook_context`, `register_task`, `register_schema`, and `start_run`.
+- Inspect the workbook MCP tool list before calling a command. The current slice implements `get_workbook_context`, `register_task`, `register_schema`, `start_run`, and test-mode `complete_run`.
 
 ## State-Aware Runbook
 
@@ -26,9 +26,9 @@ description: Build reviewed web-research workflows that keep raw data in files a
 6. Generate operators from the recorded evidence and author one pipeline YAML.
 7. Run `python -m kalki_runtime.pipeline_cli lint --pipeline <path>`.
 8. For a browser-backed source, navigate the reviewed data URL directly before execution. Create a test run with `start_run`, then run `python -m kalki_runtime.pipeline_cli test --pipeline <path> --run-id <id> --limit 5`.
-9. Show the compact manifest and at most five records per table. Test rows remain sandbox-only.
+9. Read the compact manifest and at most five envelopes per table, then call `complete_run`. Pass the manifest as an object and each full envelope with `data`, `dedupe_key`, and `provenance`, not JSON strings or data-only rows. Show the persisted result; test rows remain sandbox-only.
 
-Production authorization, publication, finalization, and skill promotion are not available until their workbook tools appear in `tools/list`.
+Production authorization, publication, production finalization, and skill promotion are not available until their workbook tools appear in `tools/list`.
 
 ## Tool Boundaries
 

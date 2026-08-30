@@ -294,6 +294,56 @@ describe('workbook persistence', () => {
       firstService.startRun(run);
       firstService.startRun(run);
 
+      const directProvenance = {
+        kind: 'direct' as const,
+        source_url: 'https://query2.finance.yahoo.com/v8/finance/chart/TSLA',
+        retrieved_at: new Date().toISOString(),
+        parents: [],
+      };
+      const sourceSamples = Array.from({ length: 5 }, (_, index) => ({
+        data: { date: `2025-01-0${index + 2}` },
+        dedupe_key: `2025-01-0${index + 2}`,
+        provenance: directProvenance,
+      }));
+      const derivedSamples = Array.from({ length: 3 }, (_, index) => ({
+        data: { rank: index + 1 },
+        dedupe_key: String(index + 1),
+        provenance: {
+          kind: 'derived' as const,
+          source_url: 'https://query2.finance.yahoo.com/v8/finance/chart/TSLA',
+          retrieved_at: directProvenance.retrieved_at,
+          parents: [{ table_slug: 'tesla-history', dedupe_key: sourceSamples[index]!.dedupe_key }],
+        },
+      }));
+      const completion = {
+        run_id: run.run_id,
+        outcome: 'completed' as const,
+        task_hash: run.task_hash,
+        schema_hash: run.schema_hash,
+        pipeline_hash: run.pipeline_hash,
+        manifest: {
+          ok: true,
+          command: 'test',
+          run_id: run.run_id,
+          mode: 'test',
+          state: 'ready_to_finalize',
+          task_hash: run.task_hash,
+          schema_hash: run.schema_hash,
+          pipeline_hash: run.pipeline_hash,
+          counts: { source_records: 5, derived_records: 3 },
+          done: true,
+          error: null,
+        },
+        samples: {
+          'tesla-history': sourceSamples,
+          'tesla-top-3': derivedSamples,
+        },
+        table_counts: {},
+        error: null,
+      };
+      firstService.completeRun(completion);
+      firstService.completeRun(completion);
+
       const otherTask = firstService.createTask(workbook.id, {
         slug: 'other-task',
         title: 'Other task',
@@ -322,12 +372,14 @@ describe('workbook persistence', () => {
       });
       reopenedDatabase.close();
 
-      expect(snapshot.tasks[0]?.state).toBe('testing');
+      expect(snapshot.tasks[0]?.state).toBe('awaiting_production_confirmation');
       expect(snapshot.tables).toHaveLength(4);
       expect(context.tables.map((table) => table.slug)).toEqual(['tesla-history', 'tesla-top-3']);
       expect(snapshot.runs).toHaveLength(2);
       expect(context.runs).toHaveLength(1);
-      expect(context.runs[0]?.status).toBe('running');
+      expect(context.runs[0]?.status).toBe('completed');
+      expect(snapshot.runs[0]?.test_samples?.['tesla-history']).toHaveLength(5);
+      expect(context.runs[0]?.counts.formal_rows).toBe(0);
       expect(context.aggregate_schema_hash).toBe(schemaHash);
     } finally {
       rmSync(directory, { recursive: true, force: true });

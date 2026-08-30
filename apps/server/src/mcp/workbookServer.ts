@@ -1,13 +1,10 @@
 import { serve } from '@hono/node-server';
 import {
-  type GetWorkbookContextData,
+  CompleteRunInputSchema,
   GetWorkbookContextInputSchema,
   READ_ONLY_TOOL_ANNOTATIONS,
-  type RegisterSchemaData,
   RegisterSchemaInputSchema,
-  type RegisterTaskData,
   RegisterTaskInputSchema,
-  type StartRunData,
   StartRunInputSchema,
   WorkbookToolResultSchema,
 } from '@kalki/contracts';
@@ -27,7 +24,7 @@ function response(result: unknown) {
   };
 }
 
-function execute(action: () => GetWorkbookContextData | RegisterTaskData | RegisterSchemaData | StartRunData) {
+function execute(action: () => unknown) {
   try {
     return response({ ok: true, data: action() });
   } catch (error) {
@@ -89,6 +86,15 @@ function createServer(workbooks: WorkbookService) {
       inputSchema: StartRunInputSchema,
     },
     (input) => execute(() => workbooks.startRun(StartRunInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'complete_run',
+    {
+      description: 'Record a terminal test result and advance its task.',
+      inputSchema: CompleteRunInputSchema,
+    },
+    (input) => execute(() => workbooks.completeRun(CompleteRunInputSchema.parse(input))),
   );
 
   return server;
