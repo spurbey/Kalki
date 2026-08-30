@@ -5,9 +5,9 @@ import {
   WorkbookSchema,
   WorkbookSnapshotSchema,
 } from '@kalki/contracts';
-import type Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { NotFoundError } from './errors.js';
+import { DomainError } from './errors.js';
 
 export class WorkbookService {
   constructor(private readonly database: Database.Database) {}
@@ -43,7 +43,7 @@ export class WorkbookService {
 
   createTask(workbookId: string, input: CreateTaskInput) {
     if (!this.database.prepare('SELECT 1 FROM workbooks WHERE id = ?').get(workbookId)) {
-      throw new NotFoundError(`Workbook '${workbookId}' was not found`);
+      throw new DomainError(`Workbook '${workbookId}' was not found`, 'not_found', 404);
     }
 
     const timestamp = new Date().toISOString();
@@ -61,29 +61,40 @@ export class WorkbookService {
       updated_at: timestamp,
     });
 
-    this.database.transaction(() => {
-      this.database
-        .prepare(
-          `INSERT INTO tasks(
-             id, workbook_id, slug, title, objective, state, task_path, task_markdown, task_hash,
-             created_at, updated_at
-           ) VALUES (
-             @id, @workbook_id, @slug, @title, @objective, @state, @task_path, @task_markdown, @task_hash,
-             @created_at, @updated_at
-           )`,
-        )
-        .run(task);
-      this.database
-        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
-        .run(workbookId, 'task.created', JSON.stringify({ task_id: task.id }), timestamp);
-    })();
+    try {
+      this.database.transaction(() => {
+        this.database
+          .prepare(
+            `INSERT INTO tasks(
+               id, workbook_id, slug, title, objective, state, task_path, task_markdown, task_hash,
+               created_at, updated_at
+             ) VALUES (
+               @id, @workbook_id, @slug, @title, @objective, @state, @task_path, @task_markdown, @task_hash,
+               @created_at, @updated_at
+             )`,
+          )
+          .run(task);
+        this.database
+          .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+          .run(workbookId, 'task.created', JSON.stringify({ task_id: task.id }), timestamp);
+      })();
+    } catch (error) {
+      if (
+        error instanceof Database.SqliteError &&
+        error.code === 'SQLITE_CONSTRAINT_UNIQUE' &&
+        error.message.includes('tasks.workbook_id, tasks.slug')
+      ) {
+        throw new DomainError(`Task slug '${input.slug}' already exists in this workbook`, 'task_slug_conflict', 409);
+      }
+      throw error;
+    }
 
     return task;
   }
 
   getSnapshot(workbookId: string) {
     const workbookRow = this.database.prepare('SELECT * FROM workbooks WHERE id = ?').get(workbookId);
-    if (!workbookRow) throw new NotFoundError(`Workbook '${workbookId}' was not found`);
+    if (!workbookRow) throw new DomainError(`Workbook '${workbookId}' was not found`, 'not_found', 404);
 
     const taskRows = this.database.prepare('SELECT * FROM tasks WHERE workbook_id = ? ORDER BY created_at').all(workbookId);
 

@@ -1,4 +1,9 @@
-export class NotFoundError extends Error {
-  readonly code = 'not_found';
-  readonly status = 404;
+export class DomainError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status: 404 | 409,
+  ) {
+    super(message);
+  }
 }

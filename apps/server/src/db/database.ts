@@ -17,11 +17,11 @@ export function openDatabase(path: string): Database.Database {
   const record = database.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)');
 
   for (const migration of migrations) {
-    if (applied.get(migration.version)) continue;
     database.transaction(() => {
+      if (applied.get(migration.version)) return;
       database.exec(migration.sql);
       record.run(migration.version, new Date().toISOString());
-    })();
+    }).immediate();
   }
 
   return database;

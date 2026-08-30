@@ -10,6 +10,9 @@ import {
   RecordEnvelopeSchema,
   Sha256Schema,
   SlugSchema,
+  TaskSchema,
+  WorkbookSchema,
+  WorkbookSnapshotSchema,
   WorkspaceRelativePathSchema,
 } from './domain.js';
 import { RunModeSchema } from './states.js';
@@ -43,6 +46,12 @@ export const CreateTurnInputSchema = z
     input: z.string().trim().min(1).max(32_768),
   })
   .strict();
+
+export const HealthResponseSchema = z.object({ ok: z.literal(true) }).strict();
+export const WorkbookResponseSchema = z.object({ data: WorkbookSchema }).strict();
+export const TaskResponseSchema = z.object({ data: TaskSchema }).strict();
+export const WorkbookSnapshotResponseSchema = z.object({ data: WorkbookSnapshotSchema }).strict();
+export const ApiErrorResponseSchema = z.object({ error: PortableErrorSchema }).strict();
 
 export const AnswerQuestionInputSchema = z
   .object({
@@ -293,6 +302,11 @@ export const WORKBOOK_TOOL_DEFINITIONS = [
 export type CreateWorkbookInput = z.infer<typeof CreateWorkbookInputSchema>;
 export type CreateTaskInput = z.infer<typeof CreateTaskInputSchema>;
 export type CreateTurnInput = z.infer<typeof CreateTurnInputSchema>;
+export type HealthResponse = z.infer<typeof HealthResponseSchema>;
+export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
+export type TaskResponse = z.infer<typeof TaskResponseSchema>;
+export type WorkbookSnapshotResponse = z.infer<typeof WorkbookSnapshotResponseSchema>;
+export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;
 export type AnswerQuestionInput = z.infer<typeof AnswerQuestionInputSchema>;
 export type GetWorkbookContextInput = z.infer<
   typeof GetWorkbookContextInputSchema
