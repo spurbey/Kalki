@@ -137,4 +137,75 @@ export const migrations = [
         ON agent_questions(workbook_id, status, created_at);
     `,
   },
+  {
+    version: 5,
+    sql: `
+      CREATE TABLE approval_events (
+        id TEXT PRIMARY KEY,
+        workbook_id TEXT NOT NULL REFERENCES workbooks(id),
+        task_id TEXT NOT NULL REFERENCES tasks(id),
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        agent_question_id TEXT NOT NULL REFERENCES agent_questions(id),
+        question_event_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        question_turn_id TEXT NOT NULL,
+        answer_turn_id TEXT NOT NULL,
+        answer_text TEXT NOT NULL,
+        approved_task_hash TEXT NOT NULL,
+        approved_schema_hash TEXT NOT NULL,
+        approved_pipeline_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(run_id),
+        UNIQUE(agent_question_id)
+      );
+
+      CREATE TABLE run_batches (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        table_id TEXT NOT NULL REFERENCES tables(id),
+        batch_key TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        row_count INTEGER NOT NULL,
+        inserted_count INTEGER NOT NULL,
+        duplicate_count INTEGER NOT NULL,
+        published_row_count_after INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(run_id, table_id, batch_key)
+      );
+
+      CREATE TABLE table_rows (
+        id TEXT PRIMARY KEY,
+        table_id TEXT NOT NULL REFERENCES tables(id),
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        batch_id TEXT NOT NULL REFERENCES run_batches(id),
+        dedupe_key TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        provenance_json TEXT NOT NULL,
+        envelope_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(table_id, run_id, dedupe_key)
+      );
+
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        trueforge_turn_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        mime_type TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(run_id, path)
+      );
+
+      CREATE INDEX idx_run_batches_run_table_created
+        ON run_batches(run_id, table_id, created_at);
+      CREATE INDEX idx_table_rows_table_run_created
+        ON table_rows(table_id, run_id, created_at, id);
+      CREATE INDEX idx_artifacts_run_created
+        ON artifacts(run_id, created_at);
+    `,
+  },
 ] as const;
