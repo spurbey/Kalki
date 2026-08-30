@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import re
+import struct
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,14 +15,52 @@ COLUMN_KEYS = {"name", "type", "nullable", "description", "minimum", "maximum", 
 TYPES = {"string", "integer", "number", "boolean", "date", "datetime", "url", "enum"}
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 COLUMN_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+MAX_SAFE_JSON_NUMBER = 2**53 - 1
 
 
 def canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True)
 
 
+def _utf16_hex(value: str) -> str:
+    return value.encode("utf-16-be", "surrogatepass").hex()
+
+
+def _hash_tree(value: object) -> object:
+    if value is None:
+        return {"t": "null"}
+    if isinstance(value, bool):
+        return {"t": "boolean", "v": value}
+    if isinstance(value, (int, float)):
+        try:
+            if isinstance(value, int) and abs(value) > MAX_SAFE_JSON_NUMBER:
+                raise ValueError
+            number = float(value)
+            if not math.isfinite(number) or abs(number) > MAX_SAFE_JSON_NUMBER:
+                raise ValueError
+            if number == 0:
+                number = 0.0
+            encoded = struct.pack(">d", number).hex()
+        except (OverflowError, ValueError, struct.error) as error:
+            raise TypeError("Value is not JSON serializable") from error
+        return {"t": "number", "v": encoded}
+    if isinstance(value, str):
+        return {"t": "string", "v": _utf16_hex(value)}
+    if isinstance(value, list):
+        return {"t": "array", "v": [_hash_tree(item) for item in value]}
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("Value is not JSON serializable")
+        entries = [
+            [_utf16_hex(key), _hash_tree(value[key])]
+            for key in sorted(value, key=lambda item: item.encode("utf-16-be", "surrogatepass"))
+        ]
+        return {"t": "object", "v": entries}
+    raise TypeError("Value is not JSON serializable")
+
+
 def hash_json(value: object) -> str:
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json(_hash_tree(value)).encode("utf-8")).hexdigest()
 
 
 def load_yaml(path: Path) -> dict[str, object]:
@@ -66,6 +105,18 @@ def validate_schema(schema: dict[str, object]) -> dict[str, object]:
             raise ValueError(f"column '{name}' has an invalid type or nullable value")
         if not isinstance(column["description"], str) or not column["description"].strip():
             raise ValueError(f"column '{name}' requires a description")
+        for bound in ("minimum", "maximum"):
+            if bound not in column:
+                continue
+            value = column[bound]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"column '{name}' has an invalid {bound}")
+            try:
+                numeric = float(value)
+            except (OverflowError, ValueError):
+                raise ValueError(f"column '{name}' has an invalid {bound}") from None
+            if not math.isfinite(numeric) or abs(numeric) > MAX_SAFE_JSON_NUMBER:
+                raise ValueError(f"column '{name}' has an invalid {bound}")
         if kind == "enum" and not isinstance(column.get("values"), list):
             raise ValueError(f"enum column '{name}' requires values")
         if kind != "enum" and "values" in column:
@@ -97,9 +148,14 @@ def _valid_value(value: object, column: dict[str, object]) -> bool:
     if kind == "string":
         valid = isinstance(value, str)
     elif kind == "integer":
-        valid = isinstance(value, int) and not isinstance(value, bool)
+        valid = isinstance(value, int) and not isinstance(value, bool) and abs(value) <= MAX_SAFE_JSON_NUMBER
     elif kind == "number":
-        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        valid = (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and abs(value) <= MAX_SAFE_JSON_NUMBER
+            and math.isfinite(value)
+        )
     elif kind == "boolean":
         valid = isinstance(value, bool)
     elif kind == "date":

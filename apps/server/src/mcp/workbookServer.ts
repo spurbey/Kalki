@@ -2,7 +2,10 @@ import { serve } from '@hono/node-server';
 import {
   CompleteRunInputSchema,
   GetWorkbookContextInputSchema,
+  ProductionAuthorizationInputSchema,
+  PublishBatchInputSchema,
   READ_ONLY_TOOL_ANNOTATIONS,
+  RecordArtifactInputSchema,
   RegisterSchemaInputSchema,
   RegisterTaskInputSchema,
   StartRunInputSchema,
@@ -86,6 +89,35 @@ function createServer(workbooks: WorkbookService) {
       inputSchema: StartRunInputSchema,
     },
     (input) => execute(() => workbooks.startRun(StartRunInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'get_production_authorization',
+    {
+      description: 'Verify explicit production consent against current file hashes.',
+      inputSchema: ProductionAuthorizationInputSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    },
+    (input) =>
+      execute(() => workbooks.getProductionAuthorization(ProductionAuthorizationInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'publish_batch',
+    {
+      description: 'Publish one validated and idempotent production batch.',
+      inputSchema: PublishBatchInputSchema,
+    },
+    (input) => execute(() => workbooks.publishBatch(PublishBatchInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'record_artifact',
+    {
+      description: 'Index artifact metadata without returning artifact bytes.',
+      inputSchema: RecordArtifactInputSchema,
+    },
+    (input) => execute(() => workbooks.recordArtifact(RecordArtifactInputSchema.parse(input))),
   );
 
   server.registerTool(

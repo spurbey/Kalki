@@ -7,6 +7,7 @@ export const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 export const TimestampSchema = z.iso.datetime({ offset: true });
 export const MAX_TABLES_PER_TASK = 10;
 export const MAX_TEST_SAMPLE_RECORDS_PER_TABLE = 5;
+export const MAX_SAFE_JSON_NUMBER = Number.MAX_SAFE_INTEGER;
 
 export type JsonObject = { [key: string]: JsonValue };
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
@@ -19,7 +20,17 @@ const TrueForgeStreamEventTypeSchema = z
   .regex(/^[^\u0000-\u001F\u007F]*$/, 'event type cannot contain control characters');
 
 export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([z.null(), z.boolean(), z.number().finite(), z.string(), z.array(JsonValueSchema), JsonObjectSchema]),
+  z.union([
+    z.null(),
+    z.boolean(),
+    z
+      .number()
+      .finite()
+      .refine(value => Math.abs(value) <= MAX_SAFE_JSON_NUMBER, 'number exceeds JavaScript safe range'),
+    z.string(),
+    z.array(JsonValueSchema),
+    JsonObjectSchema,
+  ]),
 );
 
 export const JsonObjectSchema: z.ZodType<JsonObject> = z.lazy(() =>
@@ -47,6 +58,48 @@ export function canonicalJson(value: unknown): string {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) throw new TypeError('Value is not JSON serializable');
   return serialized;
+}
+
+function utf16Hex(value: string): string {
+  let encoded = '';
+  for (let index = 0; index < value.length; index += 1) {
+    encoded += value.charCodeAt(index).toString(16).padStart(4, '0');
+  }
+  return encoded;
+}
+
+function hashTree(value: unknown): unknown {
+  if (value === null) return { t: 'null' };
+  if (typeof value === 'boolean') return { t: 'boolean', v: value };
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) {
+      throw new TypeError('Value is outside the shared JSON number range');
+    }
+    const buffer = new ArrayBuffer(8);
+    new DataView(buffer).setFloat64(0, Object.is(value, -0) ? 0 : value, false);
+    const bytes = Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, '0')).join('');
+    return { t: 'number', v: bytes };
+  }
+  if (typeof value === 'string') return { t: 'string', v: utf16Hex(value) };
+  if (Array.isArray(value)) return { t: 'array', v: value.map(hashTree) };
+  if (value && typeof value === 'object') {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError('Value is not JSON serializable');
+    }
+    const object = value as Record<string, unknown>;
+    return {
+      t: 'object',
+      v: Object.keys(object)
+        .sort()
+        .map(key => [utf16Hex(key), hashTree(object[key])]),
+    };
+  }
+  throw new TypeError('Value is not JSON serializable');
+}
+
+export function canonicalHashJson(value: unknown): string {
+  return canonicalJson(hashTree(value));
 }
 
 export const WorkspaceRelativePathSchema = z

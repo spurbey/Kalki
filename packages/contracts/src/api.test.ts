@@ -5,6 +5,7 @@ import {
   PublishBatchInputSchema,
   RegisterSchemaInputSchema,
   StartRunInputSchema,
+  TableSchemaDocumentSchema,
   WORKBOOK_TOOL_DEFINITIONS,
 } from './api.js';
 
@@ -124,6 +125,40 @@ describe('production publication', () => {
 });
 
 describe('run and review commands', () => {
+  it('keeps schema bounds within the shared JSON number range', () => {
+    const schema = {
+      version: 1 as const,
+      table: {
+        slug: 'prices',
+        name: 'Prices',
+        kind: 'source' as const,
+        description: 'Price history',
+        primary_key: ['value'],
+      },
+      columns: [
+        {
+          name: 'value',
+          type: 'number' as const,
+          nullable: false,
+          description: 'A price',
+        },
+      ],
+    };
+
+    expect(
+      TableSchemaDocumentSchema.safeParse({
+        ...schema,
+        columns: [{ ...schema.columns[0], maximum: Number.MAX_SAFE_INTEGER + 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      TableSchemaDocumentSchema.safeParse({
+        ...schema,
+        columns: [{ ...schema.columns[0], minimum: Number.MIN_SAFE_INTEGER - 1 }],
+      }).success,
+    ).toBe(false);
+  });
+
   it('requires the caller to provide the run identity', () => {
     expect(
       StartRunInputSchema.safeParse({

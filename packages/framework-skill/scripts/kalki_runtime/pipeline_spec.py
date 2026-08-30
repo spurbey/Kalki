@@ -3,7 +3,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from .schema_loader import aggregate_schema_hash, canonical_json, load_schema, load_yaml, schema_hash
+from .schema_loader import aggregate_schema_hash, hash_json, load_schema, load_yaml, schema_hash
 
 TOP_KEYS = {"version", "pipeline", "source", "transforms", "execution"}
 PIPELINE_KEYS = {"slug", "name", "task_path", "support_paths"}
@@ -33,8 +33,9 @@ class LoadedPipeline:
 
 
 def workspace_path(workspace: Path, relative: str) -> Path:
+    segments = relative.split("/")
     path = PurePosixPath(relative)
-    if path.is_absolute() or "\\" in relative or any(part in {"", ".", ".."} for part in path.parts):
+    if path.is_absolute() or "\\" in relative or any(part in {"", ".", ".."} for part in segments):
         raise ValueError(f"invalid workspace-relative path: {relative}")
     resolved = workspace.joinpath(*path.parts).resolve()
     if resolved != workspace and workspace not in resolved.parents:
@@ -150,5 +151,5 @@ def load_pipeline(workspace: Path, relative_path: str) -> LoadedPipeline:
         schemas=schemas,
         task_hash=task_hash,
         schema_hash=aggregate_schema_hash(schema_entries),
-        pipeline_hash=hashlib.sha256(canonical_json({"pipeline": data, "files": files}).encode("utf-8")).hexdigest(),
+        pipeline_hash=hash_json({"pipeline": data, "files": files}),
     )

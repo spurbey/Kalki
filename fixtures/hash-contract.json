@@ -1,0 +1,25 @@
+{
+  "value": {
+    "z": [
+      null,
+      false,
+      true,
+      1,
+      0.1,
+      -0,
+      "formula-like =SUM(A1)",
+      {
+        "b": 2.5,
+        "a": "text",
+        "surrogate": "\ud800"
+      }
+    ],
+    "a": {
+      "nested": [
+        "x",
+        42
+      ]
+    }
+  },
+  "sha256": "5d8d83ad4d380a9ddaf17c3221040bb50c27dcf9de855e588b7173a0c0df8c6b"
+}
