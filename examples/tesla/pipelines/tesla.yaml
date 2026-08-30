@@ -12,8 +12,8 @@ source:
   config:
     symbol: TSLA
     start_date: "2025-01-01"
-    interval: 1d
-    endpoint: https://query1.finance.yahoo.com/v8/finance/chart/TSLA
+    endpoint: https://query2.finance.yahoo.com/v8/finance/chart/TSLA
+    capture_url_pattern: v8/finance/chart/TSLA
 transforms:
   - id: select-top-three
     input_table: tesla-history
@@ -35,4 +35,4 @@ execution:
   request_backoff_seconds: []
   max_response_bytes: 10000000
   allowed_hosts:
-    - query1.finance.yahoo.com
+    - query2.finance.yahoo.com

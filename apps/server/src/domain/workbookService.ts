@@ -3,6 +3,8 @@ import {
   AgentQuestionSchema,
   canTransitionTask,
   canonicalJson,
+  type CompleteRunInput,
+  CompleteRunInputSchema,
   type AgentQuestion,
   type AnswerQuestionInput,
   type CreateTaskInput,
@@ -11,6 +13,7 @@ import {
   GetWorkbookContextDataSchema,
   GetWorkbookContextInputSchema,
   IdSchema,
+  MAX_TEST_SAMPLE_RECORDS_PER_TABLE,
   type RegisterSchemaInput,
   RegisterSchemaDataSchema,
   RegisterSchemaInputSchema,
@@ -803,6 +806,175 @@ export class WorkbookService {
     })();
 
     return this.runResult(run);
+  }
+
+  completeRun(input: CompleteRunInput) {
+    const requested = CompleteRunInputSchema.parse(input);
+    const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
+    if (!runRow) throw new DomainError(`Run '${requested.run_id}' was not found`, 'run_not_found', 404);
+
+    const run = this.parseRun(runRow);
+    const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(run.task_id);
+    if (!taskRow) throw new DomainError(`Task '${run.task_id}' was not found`, 'task_not_found', 404);
+    const task = TaskSchema.parse(taskRow);
+    const tables = this.database
+      .prepare('SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal')
+      .all(task.id)
+      .map((table) => this.parseTable(table));
+
+    if (
+      requested.task_hash !== run.task_hash ||
+      requested.schema_hash !== run.schema_hash ||
+      requested.pipeline_hash !== run.pipeline_hash ||
+      task.task_hash !== run.task_hash ||
+      aggregateSchemaHash(tables) !== run.schema_hash
+    ) {
+      throw new DomainError('Run hashes do not match the current task and schemas', 'hashes_not_current', 409);
+    }
+    if (run.mode !== 'test') {
+      throw new DomainError('Production completion is not available in this slice', 'run_completion_incomplete', 409);
+    }
+
+    if (['completed', 'failed', 'cancelled'].includes(run.status)) {
+      if (
+        run.status === requested.outcome &&
+        canonicalJson(run.test_manifest) === canonicalJson(requested.manifest) &&
+        canonicalJson(run.test_samples) === canonicalJson(requested.samples) &&
+        canonicalJson(run.error) === canonicalJson(requested.error)
+      ) {
+        return {
+          run_id: run.id,
+          mode: run.mode,
+          status: run.status,
+          task_state: task.state,
+          counts: run.test_manifest?.counts ?? {},
+          next_action: run.status === 'completed' ? 'ask_production_review' : 'none',
+        };
+      }
+      throw new DomainError('Run already has a different terminal result', 'terminal_run_conflict', 409);
+    }
+
+    if (run.status !== 'running' || task.state !== 'testing') {
+      throw new DomainError(`Test run cannot complete while task is '${task.state}'`, 'invalid_task_state', 409);
+    }
+
+    let nextTaskState: 'awaiting_production_confirmation' | 'building' | 'cancelled';
+    if (requested.outcome === 'completed') {
+      const manifestCounts = requested.manifest.counts;
+      const manifestTables = requested.manifest.tables;
+      if (
+        requested.error !== null ||
+        requested.manifest.ok !== true ||
+        requested.manifest.command !== 'test' ||
+        requested.manifest.run_id !== run.id ||
+        requested.manifest.mode !== 'test' ||
+        requested.manifest.state !== 'ready_to_finalize' ||
+        requested.manifest.task_hash !== run.task_hash ||
+        requested.manifest.schema_hash !== run.schema_hash ||
+        requested.manifest.pipeline_hash !== run.pipeline_hash ||
+        requested.manifest.done !== true ||
+        requested.manifest.error !== null ||
+        !manifestCounts ||
+        typeof manifestCounts !== 'object' ||
+        Array.isArray(manifestCounts) ||
+        !manifestTables ||
+        typeof manifestTables !== 'object' ||
+        Array.isArray(manifestTables)
+      ) {
+        throw new DomainError('Test manifest is incomplete or stale', 'run_completion_incomplete', 409);
+      }
+
+      const samples = requested.samples;
+      const sampleSlugs = Object.keys(samples).sort();
+      const tableSlugs = tables.map((table) => table.slug).sort();
+      const counts = manifestCounts as Record<string, unknown>;
+      const tableManifests = manifestTables as Record<string, unknown>;
+      const manifestSlugs = Object.keys(tableManifests).sort();
+      let sourceRecords = 0;
+      let derivedRecords = 0;
+
+      for (const table of tables) {
+        const tableManifest = tableManifests[table.slug];
+        if (!tableManifest || typeof tableManifest !== 'object' || Array.isArray(tableManifest)) {
+          throw new DomainError('Test table manifest is incomplete', 'run_completion_incomplete', 409);
+        }
+        const recordCount = (tableManifest as Record<string, unknown>).count;
+        if (!Number.isInteger(recordCount) || Number(recordCount) < 0) {
+          throw new DomainError('Test table count is invalid', 'run_completion_incomplete', 409);
+        }
+        if ((samples[table.slug]?.length ?? 0) !== Math.min(Number(recordCount), MAX_TEST_SAMPLE_RECORDS_PER_TABLE)) {
+          throw new DomainError('Test samples do not match table counts', 'run_completion_incomplete', 409);
+        }
+        if (table.kind === 'source') sourceRecords += Number(recordCount);
+        else derivedRecords += Number(recordCount);
+      }
+
+      if (
+        canonicalJson(sampleSlugs) !== canonicalJson(tableSlugs) ||
+        canonicalJson(manifestSlugs) !== canonicalJson(tableSlugs) ||
+        counts.source_records !== sourceRecords ||
+        counts.derived_records !== derivedRecords ||
+        sourceRecords !== 5
+      ) {
+        throw new DomainError('Test samples do not match the manifest', 'run_completion_incomplete', 409);
+      }
+      if (run.published_row_count !== 0 || Object.keys(requested.table_counts).length !== 0) {
+        throw new DomainError('Test runs cannot contain formal rows', 'test_rows_contaminated', 409);
+      }
+      nextTaskState = 'awaiting_production_confirmation';
+    } else if (requested.outcome === 'failed') {
+      if (requested.error === null) {
+        throw new DomainError('A failed run requires a portable error', 'run_completion_incomplete', 409);
+      }
+      nextTaskState = 'building';
+    } else {
+      nextTaskState = 'cancelled';
+    }
+
+    const timestamp = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE runs
+           SET status = ?, test_manifest_json = ?, test_samples_json = ?, error_json = ?,
+               finished_at = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          requested.outcome,
+          JSON.stringify(requested.manifest),
+          JSON.stringify(requested.samples),
+          requested.error ? JSON.stringify(requested.error) : null,
+          timestamp,
+          timestamp,
+          run.id,
+        );
+      this.database
+        .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
+        .run(nextTaskState, timestamp, task.id);
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(
+          task.workbook_id,
+          `run.${requested.outcome}`,
+          JSON.stringify({ run_id: run.id, task_state: nextTaskState }),
+          timestamp,
+        );
+    })();
+
+    return {
+      run_id: run.id,
+      mode: run.mode,
+      status: requested.outcome,
+      task_state: nextTaskState,
+      counts: requested.manifest.counts ?? {},
+      next_action:
+        requested.outcome === 'completed'
+          ? 'ask_production_review'
+          : requested.outcome === 'failed'
+            ? 'revise_pipeline'
+            : 'none',
+    };
   }
 
   getSnapshot(workbookId: string) {
