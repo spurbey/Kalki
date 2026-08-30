@@ -87,8 +87,8 @@ def load_pipeline(workspace: Path, relative_path: str) -> LoadedPipeline:
     source = _exact(data["source"], SOURCE_KEYS, "source")
     execution = _exact(data["execution"], EXECUTION_KEYS, "execution")
     transforms = data["transforms"]
-    if not isinstance(transforms, list) or not transforms:
-        raise ValueError("pipeline requires at least one transform")
+    if not isinstance(transforms, list):
+        raise ValueError("pipeline transforms must be a list")
     transforms = [_exact(item, TRANSFORM_KEYS, "transform") for item in transforms]
 
     task_path = pipeline["task_path"]

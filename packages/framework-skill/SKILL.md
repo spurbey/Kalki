@@ -14,7 +14,9 @@ description: Build reviewed web-research workflows that keep raw data in files a
 - Keep full records in JSONL files. Return only compact manifests and bounded review samples.
 - Only the root coordinator asks the user questions or interprets an answer.
 - Call `get_workbook_context` at the start of each stage and after compaction or recovery.
+- Reuse the current task id returned by `get_workbook_context`; do not register a duplicate task after recovery.
 - Inspect the workbook MCP tool list before calling a command. The current slice implements every workflow tool except `promote_skill`.
+- Use `kalki_runtime.schema_loader` and `pipeline_cli lint` for contract hashes. Never hand-roll schema or pipeline hashes.
 
 ## State-Aware Runbook
 
@@ -31,7 +33,7 @@ description: Build reviewed web-research workflows that keep raw data in files a
 5. Explore the unfamiliar source with Playwright, inspect relevant network requests, and save compact evidence under `research/`.
 6. Author the complete schema set, lint it, and call `register_schema` once with every table.
 7. Ask the schema review question and wait for the user.
-8. Generate operators from the recorded evidence and author one pipeline YAML.
+8. Generate operators from the recorded evidence and author one pipeline YAML. Source-only workflows use `transforms: []`.
 9. Run the pipeline CLI with `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client"`.
 10. For a browser-backed source, navigate the reviewed data URL directly before execution. Create a test run with `start_run`, then run the CLI test command with `--limit 5`.
 11. Read the compact manifest and at most five envelopes per table, then call `complete_run`. Pass the manifest as an object and each full envelope with `data`, `dedupe_key`, and `provenance`, not JSON strings or data-only rows. Show the persisted result; test rows remain sandbox-only.
@@ -50,6 +52,7 @@ Skill promotion remains unavailable until `promote_skill` appears in `tools/list
 - Generated operators never connect to SQLite or call workbook mutation tools.
 - The root coordinator calls navigation and interaction tools directly. A generated source operator may use `mcp_client.call_tool` only with safe Playwright read tools to consume responses already captured by that browser session.
 - Do not bypass TrueForge approval checks or call `browser_navigate`, `browser_evaluate`, or other destructive tools from Code Mode.
+- A Playwright tool `filename` is written on the MCP host, not inside Daytona. Do not treat it as a sandbox workspace file.
 
 ## Large-Data Rules
 
