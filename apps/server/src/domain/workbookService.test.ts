@@ -234,9 +234,11 @@ describe('workbook persistence', () => {
   it('persists reviewed schemas and a test run', () => {
     const directory = mkdtempSync(join(tmpdir(), 'kalki-'));
     const path = join(directory, 'kalki.db');
+    let firstDatabase: ReturnType<typeof openDatabase> | null = null;
+    let reopenedDatabase: ReturnType<typeof openDatabase> | null = null;
 
     try {
-      const firstDatabase = openDatabase(path);
+      firstDatabase = openDatabase(path);
       const firstService = new WorkbookService(firstDatabase);
       const workbook = firstService.createWorkbook({ title: 'Tesla research' });
       const task = firstService.createTask(workbook.id, {
@@ -435,6 +437,120 @@ describe('workbook persistence', () => {
         productionAnswer,
         'turn-production-answer',
       );
+      const productionHashes = {
+        task_hash: productionRun.task_hash,
+        schema_hash: productionRun.schema_hash,
+        pipeline_hash: productionRun.pipeline_hash,
+      };
+      expect(
+        firstService.getProductionAuthorization({ run_id: productionRun.run_id, ...productionHashes }).authorized,
+      ).toBe(true);
+
+      const testBatchRecords = sourceSamples.slice(0, 1);
+      expect(() =>
+        firstService.publishBatch({
+          run_id: run.run_id,
+          task_hash: run.task_hash,
+          schema_hash: run.schema_hash,
+          pipeline_hash: run.pipeline_hash,
+          table_slug: 'tesla-history',
+          batch_key: 'tesla-history:00000000',
+          payload_hash: jsonHash({
+            run_id: run.run_id,
+            table_slug: 'tesla-history',
+            batch_key: 'tesla-history:00000000',
+            records: testBatchRecords,
+          }),
+          records: testBatchRecords,
+        }),
+      ).toThrow();
+
+      const sourceBatch = {
+        run_id: productionRun.run_id,
+        ...productionHashes,
+        table_slug: 'tesla-history',
+        batch_key: 'tesla-history:00000000',
+        payload_hash: jsonHash({
+          run_id: productionRun.run_id,
+          table_slug: 'tesla-history',
+          batch_key: 'tesla-history:00000000',
+          records: sourceSamples,
+        }),
+        records: sourceSamples,
+      };
+      expect(firstService.publishBatch(sourceBatch)).toMatchObject({ inserted: 5, replayed: false });
+      expect(firstService.publishBatch(sourceBatch)).toMatchObject({ inserted: 5, replayed: true });
+      const changedSourceRecords = sourceSamples.slice(0, 4);
+      expect(() =>
+        firstService.publishBatch({
+          ...sourceBatch,
+          payload_hash: jsonHash({
+            run_id: productionRun.run_id,
+            table_slug: sourceBatch.table_slug,
+            batch_key: sourceBatch.batch_key,
+            records: changedSourceRecords,
+          }),
+          records: changedSourceRecords,
+        }),
+      ).toThrow();
+
+      const productionDerivedRecords = derivedSamples.slice(0, 3);
+      const derivedBatch = {
+        run_id: productionRun.run_id,
+        ...productionHashes,
+        table_slug: 'tesla-top-3',
+        batch_key: 'tesla-top-3:00000000',
+        payload_hash: jsonHash({
+          run_id: productionRun.run_id,
+          table_slug: 'tesla-top-3',
+          batch_key: 'tesla-top-3:00000000',
+          records: productionDerivedRecords,
+        }),
+        records: productionDerivedRecords,
+      };
+      expect(firstService.publishBatch(derivedBatch)).toMatchObject({ inserted: 3, published_row_count: 8 });
+      firstService.recordArtifact({
+        run_id: productionRun.run_id,
+        trueforge_turn_id: 'turn-production-answer',
+        kind: 'report',
+        path: 'artifacts/run-report.md',
+        sha256: 'c'.repeat(64),
+        size_bytes: 128,
+        mime_type: 'text/markdown',
+        metadata: { scan: { status: 'passed', scanner_version: 1 } },
+        task_hash: productionRun.task_hash,
+        schema_hash: productionRun.schema_hash,
+        pipeline_hash: productionRun.pipeline_hash,
+      });
+      const productionCompletion = {
+        run_id: productionRun.run_id,
+        outcome: 'completed' as const,
+        task_hash: productionRun.task_hash,
+        schema_hash: productionRun.schema_hash,
+        pipeline_hash: productionRun.pipeline_hash,
+        manifest: {
+          ok: true,
+          command: 'finalize',
+          run_id: productionRun.run_id,
+          mode: 'production',
+          state: 'ready_to_finalize',
+          task_hash: productionRun.task_hash,
+          schema_hash: productionRun.schema_hash,
+          pipeline_hash: productionRun.pipeline_hash,
+          counts: { source_records: 5, derived_records: 3, yahoo_timestamp_count: 5 },
+          tables: {
+            'tesla-history': { count: 5 },
+            'tesla-top-3': { count: 3 },
+          },
+          done: true,
+          error: null,
+        },
+        samples: {},
+        table_counts: { 'tesla-history': 5, 'tesla-top-3': 3 },
+        error: null,
+      };
+      firstService.completeRun(productionCompletion);
+      firstService.completeRun(productionCompletion);
 
       const otherTask = firstService.createTask(workbook.id, {
         slug: 'other-task',
@@ -454,8 +570,9 @@ describe('workbook persistence', () => {
       firstDatabase.prepare("UPDATE tasks SET state = 'building' WHERE id = ?").run(otherTask.id);
       firstService.startRun({ ...run, run_id: 'run_other_test', task_id: otherTask.id, task_hash: otherTaskHash });
       firstDatabase.close();
+      firstDatabase = null;
 
-      const reopenedDatabase = openDatabase(path);
+      reopenedDatabase = openDatabase(path);
       const reopenedService = new WorkbookService(reopenedDatabase);
       const snapshot = reopenedService.getSnapshot(workbook.id);
       const context = reopenedService.getWorkbookContext({
@@ -463,21 +580,27 @@ describe('workbook persistence', () => {
         task_id: task.id,
       });
 
-      expect(snapshot.tasks[0]?.state).toBe('production_running');
+      expect(snapshot.tasks[0]?.state).toBe('completed');
       expect(snapshot.tables).toHaveLength(4);
       expect(context.tables.map((table) => table.slug)).toEqual(['tesla-history', 'tesla-top-3']);
       expect(snapshot.runs).toHaveLength(3);
       expect(context.runs).toHaveLength(2);
       expect(context.runs.find((candidate) => candidate.mode === 'test')?.status).toBe('completed');
-      expect(context.runs.find((candidate) => candidate.mode === 'production')?.status).toBe('authorized');
+      expect(context.runs.find((candidate) => candidate.mode === 'production')?.status).toBe('completed');
       expect(snapshot.runs[0]?.test_samples?.['tesla-history']).toHaveLength(5);
-      expect(context.runs.every((candidate) => candidate.counts.formal_rows === 0)).toBe(true);
+      expect(context.runs.find((candidate) => candidate.mode === 'test')?.counts.formal_rows).toBe(0);
+      expect(context.runs.find((candidate) => candidate.mode === 'production')?.counts.formal_rows).toBe(8);
       expect(context.aggregate_schema_hash).toBe(schemaHash);
+      expect(snapshot.artifacts).toHaveLength(1);
+      expect(Object.values(snapshot.table_counts).reduce((sum, count) => sum + count, 0)).toBe(8);
       expect(
         reopenedDatabase.prepare('SELECT count(*) AS count FROM approval_events').get(),
       ).toEqual({ count: 1 });
       reopenedDatabase.close();
+      reopenedDatabase = null;
     } finally {
+      firstDatabase?.close();
+      reopenedDatabase?.close();
       rmSync(directory, { recursive: true, force: true });
     }
   });

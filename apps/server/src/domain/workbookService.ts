@@ -2,6 +2,7 @@ import {
   ApprovalEventSchema,
   AnswerQuestionInputSchema,
   AgentQuestionSchema,
+  ArtifactSchema,
   canTransitionTask,
   canonicalJson,
   type CompleteRunInput,
@@ -15,6 +16,12 @@ import {
   GetWorkbookContextInputSchema,
   IdSchema,
   MAX_TEST_SAMPLE_RECORDS_PER_TABLE,
+  type ProductionAuthorizationInput,
+  ProductionAuthorizationInputSchema,
+  type PublishBatchInput,
+  PublishBatchInputSchema,
+  type RecordArtifactInput,
+  RecordArtifactInputSchema,
   type RegisterSchemaInput,
   RegisterSchemaDataSchema,
   RegisterSchemaInputSchema,
@@ -22,11 +29,14 @@ import {
   RegisterTaskDataSchema,
   RegisterTaskInputSchema,
   RunSchema,
+  RunBatchSchema,
   type Task,
   type StartRunInput,
   StartRunDataSchema,
   StartRunInputSchema,
   TableSchema,
+  TableRowSchema,
+  TableSchemaDocumentSchema,
   TaskSchema,
   type TrueForgeTurn,
   type TrueForgeTurnInput,
@@ -50,6 +60,69 @@ function aggregateSchemaHash(tables: Array<{ schema_path: string; schema_hash: s
       .map((table) => ({ path: table.schema_path, sha256: table.schema_hash }))
       .sort((left, right) => left.path.localeCompare(right.path)),
   );
+}
+
+type TableDocument = ReturnType<typeof TableSchemaDocumentSchema.parse>;
+
+function validDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function validColumnValue(value: unknown, column: TableDocument['columns'][number]): boolean {
+  if (value === null) return column.nullable;
+
+  let valid = false;
+  if (column.type === 'string') valid = typeof value === 'string';
+  else if (column.type === 'integer') valid = typeof value === 'number' && Number.isInteger(value);
+  else if (column.type === 'number') valid = typeof value === 'number' && Number.isFinite(value);
+  else if (column.type === 'boolean') valid = typeof value === 'boolean';
+  else if (column.type === 'date') valid = typeof value === 'string' && validDate(value);
+  else if (column.type === 'datetime') {
+    valid =
+      typeof value === 'string' &&
+      /(Z|[+-]\d{2}:\d{2})$/.test(value) &&
+      !Number.isNaN(Date.parse(value));
+  } else if (column.type === 'url') {
+    try {
+      const url = new URL(String(value));
+      valid = typeof value === 'string' && (url.protocol === 'http:' || url.protocol === 'https:');
+    } catch {
+      valid = false;
+    }
+  } else if (column.type === 'enum') {
+    valid = typeof value === 'string' && (column.values ?? []).includes(value);
+  }
+
+  if (!valid) return false;
+  if (typeof value === 'number' && column.minimum !== undefined && value < column.minimum) return false;
+  if (typeof value === 'number' && column.maximum !== undefined && value > column.maximum) return false;
+  if (typeof value === 'string' && column.pattern !== undefined) {
+    try {
+      if (!new RegExp(column.pattern).test(value)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+function validateRecordData(schema: TableDocument, data: Record<string, unknown>): void {
+  const expected = schema.columns.map((column) => column.name).sort();
+  if (canonicalJson(Object.keys(data).sort()) !== canonicalJson(expected)) {
+    throw new DomainError('Record columns do not match the registered schema', 'schema_validation_failed', 400);
+  }
+  for (const column of schema.columns) {
+    if (!validColumnValue(data[column.name], column)) {
+      throw new DomainError(`Record column '${column.name}' is invalid`, 'schema_validation_failed', 400);
+    }
+  }
+}
+
+function recordDedupeKey(schema: TableDocument, data: Record<string, unknown>): string {
+  const values = schema.table.primary_key.map((name) => data[name]);
+  return values.length === 1 ? String(values[0]) : canonicalJson(values);
 }
 
 type PendingQuestionRegistration = {
@@ -895,6 +968,402 @@ export class WorkbookService {
     return this.runResult(run);
   }
 
+  getProductionAuthorization(input: ProductionAuthorizationInput) {
+    const requested = ProductionAuthorizationInputSchema.parse(input);
+    const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
+    if (!runRow) throw new DomainError(`Run '${requested.run_id}' was not found`, 'run_not_found', 404);
+    const run = this.parseRun(runRow);
+    const hashes = {
+      task: requested.task_hash,
+      schema: requested.schema_hash,
+      pipeline: requested.pipeline_hash,
+    };
+    const denied = (reason: string) => ({
+      authorized: false,
+      reason,
+      run_id: run.id,
+      approved_at: null,
+      approval_event_id: null,
+      hashes,
+    });
+
+    if (run.mode !== 'production') return denied('run_not_production');
+    if (run.status === 'awaiting_confirmation') return denied('awaiting_explicit_consent');
+    if (!['authorized', 'running', 'finalizing'].includes(run.status)) return denied('run_not_active');
+    if (
+      !run.approved_at ||
+      !run.approval_event_id ||
+      !run.approved_task_hash ||
+      !run.approved_schema_hash ||
+      !run.approved_pipeline_hash
+    ) {
+      return denied('approval_evidence_missing');
+    }
+
+    const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(run.task_id);
+    if (!taskRow) throw new DomainError(`Task '${run.task_id}' was not found`, 'task_not_found', 404);
+    const task = TaskSchema.parse(taskRow);
+    const tables = this.database
+      .prepare('SELECT * FROM tables WHERE task_id = ? ORDER BY ordinal')
+      .all(task.id)
+      .map((table) => this.parseTable(table));
+    const approval = this.database
+      .prepare('SELECT * FROM approval_events WHERE id = ? AND run_id = ?')
+      .get(run.approval_event_id, run.id) as Record<string, unknown> | undefined;
+
+    if (!approval) return denied('approval_evidence_missing');
+    if (
+      run.task_hash !== requested.task_hash ||
+      run.schema_hash !== requested.schema_hash ||
+      run.pipeline_hash !== requested.pipeline_hash ||
+      task.task_hash !== requested.task_hash ||
+      aggregateSchemaHash(tables) !== requested.schema_hash ||
+      run.approved_task_hash !== requested.task_hash ||
+      run.approved_schema_hash !== requested.schema_hash ||
+      run.approved_pipeline_hash !== requested.pipeline_hash ||
+      approval.approved_task_hash !== requested.task_hash ||
+      approval.approved_schema_hash !== requested.schema_hash ||
+      approval.approved_pipeline_hash !== requested.pipeline_hash
+    ) {
+      return denied('approval_hash_mismatch');
+    }
+
+    return {
+      authorized: true,
+      reason: 'authorized',
+      run_id: run.id,
+      approved_at: run.approved_at,
+      approval_event_id: run.approval_event_id,
+      hashes,
+    };
+  }
+
+  publishBatch(input: PublishBatchInput) {
+    const requested = PublishBatchInputSchema.parse(input);
+    const payloadHash = hashJson({
+      run_id: requested.run_id,
+      table_slug: requested.table_slug,
+      batch_key: requested.batch_key,
+      records: requested.records,
+    });
+    if (payloadHash !== requested.payload_hash) {
+      throw new DomainError('payload_hash does not match records', 'payload_hash_mismatch', 400);
+    }
+
+    const publish = this.database.transaction(() => {
+      const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
+      if (!runRow) throw new DomainError(`Run '${requested.run_id}' was not found`, 'run_not_found', 404);
+      const run = this.parseRun(runRow);
+      const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(run.task_id);
+      if (!taskRow) throw new DomainError(`Task '${run.task_id}' was not found`, 'task_not_found', 404);
+      const task = TaskSchema.parse(taskRow);
+      const tableRow = this.database
+        .prepare('SELECT * FROM tables WHERE task_id = ? AND slug = ?')
+        .get(task.id, requested.table_slug);
+      if (!tableRow) {
+        throw new DomainError(`Table '${requested.table_slug}' was not found`, 'table_not_found', 404);
+      }
+      const table = this.parseTable(tableRow);
+      const existingRow = this.database
+        .prepare('SELECT * FROM run_batches WHERE run_id = ? AND table_id = ? AND batch_key = ?')
+        .get(run.id, table.id, requested.batch_key);
+      if (existingRow) {
+        const existing = RunBatchSchema.parse(existingRow);
+        if (existing.payload_hash !== payloadHash) {
+          throw new DomainError('Batch key already has a different payload', 'batch_key_conflict', 409);
+        }
+        return {
+          run_id: run.id,
+          table_slug: table.slug,
+          batch_key: existing.batch_key,
+          payload_hash: existing.payload_hash,
+          replayed: true,
+          processed: existing.row_count,
+          inserted: existing.inserted_count,
+          duplicates: existing.duplicate_count,
+          published_row_count: existing.published_row_count_after,
+        };
+      }
+
+      if (run.mode !== 'production') {
+        throw new DomainError('Test runs cannot publish formal rows', 'test_publish_forbidden', 409);
+      }
+      if (!['authorized', 'running'].includes(run.status) || task.state !== 'production_running') {
+        throw new DomainError('Production run is not accepting batches', 'invalid_run_state', 409);
+      }
+      const authorization = this.getProductionAuthorization({
+        run_id: run.id,
+        task_hash: requested.task_hash,
+        schema_hash: requested.schema_hash,
+        pipeline_hash: requested.pipeline_hash,
+      });
+      if (!authorization.authorized) {
+        const code = authorization.reason === 'approval_hash_mismatch' ? 'approval_hash_mismatch' : 'production_not_authorized';
+        throw new DomainError('Production authorization is not current', code, 409);
+      }
+
+      const schema = TableSchemaDocumentSchema.parse(table.schema);
+      const seen = new Set<string>();
+      const rows = requested.records.map((record) => {
+        validateRecordData(schema, record.data);
+        if (record.dedupe_key !== recordDedupeKey(schema, record.data)) {
+          throw new DomainError('Record dedupe key does not match its primary key', 'schema_validation_failed', 400);
+        }
+        if (seen.has(record.dedupe_key)) {
+          throw new DomainError('Batch contains a duplicate dedupe key', 'duplicate_dedupe_key', 409);
+        }
+        seen.add(record.dedupe_key);
+        if (
+          (table.kind === 'source' && record.provenance.kind !== 'direct') ||
+          (table.kind === 'derived' && record.provenance.kind !== 'derived')
+        ) {
+          throw new DomainError('Record provenance does not match the table kind', 'schema_validation_failed', 400);
+        }
+        for (const parent of record.provenance.parents) {
+          const parentRow = this.database
+            .prepare(
+              `SELECT 1 FROM table_rows
+               JOIN tables ON tables.id = table_rows.table_id
+               WHERE tables.task_id = ? AND tables.slug = ?
+                 AND table_rows.run_id = ? AND table_rows.dedupe_key = ?`,
+            )
+            .get(task.id, parent.table_slug, run.id, parent.dedupe_key);
+          if (!parentRow) {
+            throw new DomainError('Derived provenance parent was not published', 'schema_validation_failed', 400);
+          }
+        }
+
+        const envelopeHash = hashJson({ data: record.data, provenance: record.provenance });
+        const existing = this.database
+          .prepare('SELECT envelope_hash FROM table_rows WHERE table_id = ? AND run_id = ? AND dedupe_key = ?')
+          .get(table.id, run.id, record.dedupe_key) as { envelope_hash: string } | undefined;
+        if (existing && existing.envelope_hash !== envelopeHash) {
+          throw new DomainError('Existing row has different content', 'row_identity_conflict', 409);
+        }
+        return { record, envelopeHash, duplicate: Boolean(existing) };
+      });
+
+      const insertedCount = rows.filter((row) => !row.duplicate).length;
+      const duplicateCount = rows.length - insertedCount;
+      const publishedRowCount = run.published_row_count + insertedCount;
+      const timestamp = new Date().toISOString();
+      const batch = RunBatchSchema.parse({
+        id: `batch_${randomUUID()}`,
+        run_id: run.id,
+        table_id: table.id,
+        batch_key: requested.batch_key,
+        payload_hash: payloadHash,
+        row_count: rows.length,
+        inserted_count: insertedCount,
+        duplicate_count: duplicateCount,
+        published_row_count_after: publishedRowCount,
+        created_at: timestamp,
+      });
+      this.database
+        .prepare(
+          `INSERT INTO run_batches(
+             id, run_id, table_id, batch_key, payload_hash, row_count, inserted_count,
+             duplicate_count, published_row_count_after, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          batch.id,
+          batch.run_id,
+          batch.table_id,
+          batch.batch_key,
+          batch.payload_hash,
+          batch.row_count,
+          batch.inserted_count,
+          batch.duplicate_count,
+          batch.published_row_count_after,
+          batch.created_at,
+        );
+      const insertRow = this.database.prepare(
+        `INSERT INTO table_rows(
+           id, table_id, run_id, batch_id, dedupe_key, data_json,
+           provenance_json, envelope_hash, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const row of rows) {
+        if (row.duplicate) continue;
+        const stored = TableRowSchema.parse({
+          id: `row_${randomUUID()}`,
+          table_id: table.id,
+          run_id: run.id,
+          batch_id: batch.id,
+          dedupe_key: row.record.dedupe_key,
+          data: row.record.data,
+          provenance: row.record.provenance,
+          envelope_hash: row.envelopeHash,
+          created_at: timestamp,
+        });
+        insertRow.run(
+          stored.id,
+          stored.table_id,
+          stored.run_id,
+          stored.batch_id,
+          stored.dedupe_key,
+          canonicalJson(stored.data),
+          canonicalJson(stored.provenance),
+          stored.envelope_hash,
+          stored.created_at,
+        );
+      }
+      this.database
+        .prepare(
+          `UPDATE runs
+           SET status = 'running', published_row_count = ?, started_at = COALESCE(started_at, ?), updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(publishedRowCount, timestamp, timestamp, run.id);
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(
+          task.workbook_id,
+          'table.batch_published',
+          JSON.stringify({
+            run_id: run.id,
+            table_id: table.id,
+            table_slug: table.slug,
+            batch_key: batch.batch_key,
+            inserted: insertedCount,
+            duplicates: duplicateCount,
+            published_row_count: publishedRowCount,
+          }),
+          timestamp,
+        );
+
+      return {
+        run_id: run.id,
+        table_slug: table.slug,
+        batch_key: batch.batch_key,
+        payload_hash: batch.payload_hash,
+        replayed: false,
+        processed: batch.row_count,
+        inserted: insertedCount,
+        duplicates: duplicateCount,
+        published_row_count: publishedRowCount,
+      };
+    });
+
+    return publish.immediate();
+  }
+
+  recordArtifact(input: RecordArtifactInput) {
+    const requested = RecordArtifactInputSchema.parse(input);
+    if (!requested.path.startsWith('artifacts/')) {
+      throw new DomainError('Artifacts must be stored under artifacts/', 'artifact_path_invalid', 400);
+    }
+    const scan = requested.metadata.scan;
+    if (!scan || typeof scan !== 'object' || Array.isArray(scan) || scan.status !== 'passed') {
+      throw new DomainError('Artifact requires a passed scan result', 'artifact_scan_required', 400);
+    }
+
+    const record = this.database.transaction(() => {
+      const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
+      if (!runRow) throw new DomainError(`Run '${requested.run_id}' was not found`, 'run_not_found', 404);
+      const run = this.parseRun(runRow);
+      const taskRow = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(run.task_id);
+      if (!taskRow) throw new DomainError(`Task '${run.task_id}' was not found`, 'task_not_found', 404);
+      const task = TaskSchema.parse(taskRow);
+      const existingRow = this.database.prepare('SELECT * FROM artifacts WHERE run_id = ? AND path = ?').get(run.id, requested.path);
+      if (existingRow) {
+        const existing = this.parseArtifact(existingRow);
+        if (existing.sha256 !== requested.sha256) {
+          throw new DomainError('Artifact path already has different content', 'artifact_identity_conflict', 409);
+        }
+        return { ...existing, download_available: true };
+      }
+
+      if (
+        run.task_hash !== requested.task_hash ||
+        run.schema_hash !== requested.schema_hash ||
+        run.pipeline_hash !== requested.pipeline_hash
+      ) {
+        throw new DomainError('Artifact hashes do not match the run', 'approval_hash_mismatch', 409);
+      }
+      const turn = this.database
+        .prepare('SELECT 1 FROM trueforge_turns WHERE id = ? AND workbook_id = ?')
+        .get(requested.trueforge_turn_id, task.workbook_id);
+      if (!turn) throw new DomainError('Artifact turn does not belong to the workbook', 'turn_not_in_workbook', 409);
+
+      if (run.mode === 'production') {
+        if (!['running', 'finalizing'].includes(run.status)) {
+          throw new DomainError('Production run is not ready for artifacts', 'invalid_run_state', 409);
+        }
+        const authorization = this.getProductionAuthorization({
+          run_id: run.id,
+          task_hash: requested.task_hash,
+          schema_hash: requested.schema_hash,
+          pipeline_hash: requested.pipeline_hash,
+        });
+        if (!authorization.authorized) {
+          const code = authorization.reason === 'approval_hash_mismatch' ? 'approval_hash_mismatch' : 'production_not_authorized';
+          throw new DomainError('Production authorization is not current', code, 409);
+        }
+        const incompleteTable = this.database
+          .prepare(
+            `SELECT tables.slug FROM tables
+             LEFT JOIN table_rows ON table_rows.table_id = tables.id AND table_rows.run_id = ?
+             WHERE tables.task_id = ?
+             GROUP BY tables.id HAVING count(table_rows.id) = 0 LIMIT 1`,
+          )
+          .get(run.id, task.id);
+        if (incompleteTable) {
+          throw new DomainError('Formal tables are not fully published', 'run_completion_incomplete', 409);
+        }
+      }
+
+      const timestamp = new Date().toISOString();
+      const artifact = ArtifactSchema.parse({
+        id: `artifact_${randomUUID()}`,
+        run_id: run.id,
+        trueforge_turn_id: requested.trueforge_turn_id,
+        kind: requested.kind,
+        path: requested.path,
+        sha256: requested.sha256,
+        size_bytes: requested.size_bytes,
+        mime_type: requested.mime_type,
+        metadata: requested.metadata,
+        created_at: timestamp,
+      });
+      this.database
+        .prepare(
+          `INSERT INTO artifacts(
+             id, run_id, trueforge_turn_id, kind, path, sha256, size_bytes,
+             mime_type, metadata_json, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          artifact.id,
+          artifact.run_id,
+          artifact.trueforge_turn_id,
+          artifact.kind,
+          artifact.path,
+          artifact.sha256,
+          artifact.size_bytes,
+          artifact.mime_type,
+          canonicalJson(artifact.metadata),
+          artifact.created_at,
+        );
+      if (run.mode === 'production' && run.status === 'running') {
+        this.database.prepare("UPDATE runs SET status = 'finalizing', updated_at = ? WHERE id = ?").run(timestamp, run.id);
+        this.database.prepare("UPDATE tasks SET state = 'finalizing', updated_at = ? WHERE id = ?").run(timestamp, task.id);
+      }
+      this.database
+        .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(
+          task.workbook_id,
+          'artifact.recorded',
+          JSON.stringify({ artifact_id: artifact.id, run_id: run.id, kind: artifact.kind, path: artifact.path }),
+          timestamp,
+        );
+      return { ...artifact, download_available: true };
+    });
+
+    return record.immediate();
+  }
+
   completeRun(input: CompleteRunInput) {
     const requested = CompleteRunInputSchema.parse(input);
     const runRow = this.database.prepare('SELECT * FROM runs WHERE id = ?').get(requested.run_id);
@@ -918,10 +1387,6 @@ export class WorkbookService {
     ) {
       throw new DomainError('Run hashes do not match the current task and schemas', 'hashes_not_current', 409);
     }
-    if (run.mode !== 'test') {
-      throw new DomainError('Production completion is not available in this slice', 'run_completion_incomplete', 409);
-    }
-
     if (['completed', 'failed', 'cancelled'].includes(run.status)) {
       if (
         run.status === requested.outcome &&
@@ -935,10 +1400,149 @@ export class WorkbookService {
           status: run.status,
           task_state: task.state,
           counts: run.test_manifest?.counts ?? {},
-          next_action: run.status === 'completed' ? 'ask_production_review' : 'none',
+          next_action:
+            run.mode === 'test' && run.status === 'completed'
+              ? 'ask_production_review'
+              : run.mode === 'production' && run.status === 'completed'
+                ? 'offer_skill_promotion'
+                : 'none',
         };
       }
       throw new DomainError('Run already has a different terminal result', 'terminal_run_conflict', 409);
+    }
+
+    if (run.mode === 'production') {
+      if (!['authorized', 'running', 'finalizing'].includes(run.status)) {
+        throw new DomainError('Production run cannot complete from its current state', 'invalid_run_state', 409);
+      }
+      if (Object.keys(requested.samples).length !== 0) {
+        throw new DomainError('Production completion cannot contain review samples', 'run_completion_incomplete', 409);
+      }
+
+      const countRows = this.database
+        .prepare(
+          `SELECT tables.slug, tables.kind, count(table_rows.id) AS count
+           FROM tables
+           LEFT JOIN table_rows ON table_rows.table_id = tables.id AND table_rows.run_id = ?
+           WHERE tables.task_id = ?
+           GROUP BY tables.id ORDER BY tables.ordinal`,
+        )
+        .all(run.id, task.id) as Array<{ slug: string; kind: 'source' | 'derived'; count: number }>;
+      const tableCounts = Object.fromEntries(countRows.map((row) => [row.slug, row.count]));
+      const totalRecords = countRows.reduce((sum, row) => sum + row.count, 0);
+      const sourceRecords = countRows
+        .filter((row) => row.kind === 'source')
+        .reduce((sum, row) => sum + row.count, 0);
+      const derivedRecords = totalRecords - sourceRecords;
+      const artifactRows = this.database.prepare('SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at').all(run.id);
+      let nextTaskState: 'completed' | 'failed' | 'cancelled';
+
+      if (requested.outcome === 'completed') {
+        const authorization = this.getProductionAuthorization({
+          run_id: run.id,
+          task_hash: requested.task_hash,
+          schema_hash: requested.schema_hash,
+          pipeline_hash: requested.pipeline_hash,
+        });
+        const manifestCounts = requested.manifest.counts;
+        const manifestTables = requested.manifest.tables;
+        const topThreeCount = tableCounts['tesla-top-3'];
+        if (
+          !authorization.authorized ||
+          run.status !== 'finalizing' ||
+          task.state !== 'finalizing' ||
+          requested.error !== null ||
+          requested.manifest.ok !== true ||
+          requested.manifest.command !== 'finalize' ||
+          requested.manifest.run_id !== run.id ||
+          requested.manifest.mode !== 'production' ||
+          requested.manifest.state !== 'ready_to_finalize' ||
+          requested.manifest.task_hash !== run.task_hash ||
+          requested.manifest.schema_hash !== run.schema_hash ||
+          requested.manifest.pipeline_hash !== run.pipeline_hash ||
+          requested.manifest.done !== true ||
+          requested.manifest.error !== null ||
+          !manifestCounts ||
+          typeof manifestCounts !== 'object' ||
+          Array.isArray(manifestCounts) ||
+          !manifestTables ||
+          typeof manifestTables !== 'object' ||
+          Array.isArray(manifestTables) ||
+          canonicalJson(requested.table_counts) !== canonicalJson(tableCounts) ||
+          run.published_row_count !== totalRecords ||
+          sourceRecords === 0 ||
+          (topThreeCount !== undefined && topThreeCount !== 3) ||
+          artifactRows.length === 0
+        ) {
+          throw new DomainError('Production result is incomplete or stale', 'run_completion_incomplete', 409);
+        }
+
+        const counts = manifestCounts as Record<string, unknown>;
+        const tableManifests = manifestTables as Record<string, unknown>;
+        if (
+          counts.source_records !== sourceRecords ||
+          counts.derived_records !== derivedRecords ||
+          counts.yahoo_timestamp_count !== sourceRecords ||
+          canonicalJson(Object.keys(tableManifests).sort()) !== canonicalJson(Object.keys(tableCounts).sort()) ||
+          countRows.some((row) => {
+            const item = tableManifests[row.slug];
+            return !item || typeof item !== 'object' || Array.isArray(item) || (item as Record<string, unknown>).count !== row.count;
+          })
+        ) {
+          throw new DomainError('Production manifest does not match formal rows', 'run_completion_incomplete', 409);
+        }
+        nextTaskState = 'completed';
+      } else if (requested.outcome === 'failed') {
+        if (requested.error === null) {
+          throw new DomainError('A failed run requires a portable error', 'run_completion_incomplete', 409);
+        }
+        nextTaskState = 'failed';
+      } else {
+        nextTaskState = 'cancelled';
+      }
+
+      const timestamp = new Date().toISOString();
+      const finish = this.database.transaction(() => {
+        this.database
+          .prepare(
+            `UPDATE runs
+             SET status = ?, test_manifest_json = ?, test_samples_json = ?, total_record_count = ?,
+                 error_json = ?, finished_at = ?, updated_at = ?
+             WHERE id = ?`,
+          )
+          .run(
+            requested.outcome,
+            JSON.stringify(requested.manifest),
+            JSON.stringify(requested.samples),
+            totalRecords,
+            requested.error ? JSON.stringify(requested.error) : null,
+            timestamp,
+            timestamp,
+            run.id,
+          );
+        this.database
+          .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
+          .run(nextTaskState, timestamp, task.id);
+        this.database
+          .prepare('INSERT INTO workbook_events(workbook_id, type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+          .run(
+            task.workbook_id,
+            `run.${requested.outcome}`,
+            JSON.stringify({ run_id: run.id, task_state: nextTaskState, table_counts: tableCounts }),
+            timestamp,
+          );
+      });
+      finish.immediate();
+
+      return {
+        run_id: run.id,
+        mode: run.mode,
+        status: requested.outcome,
+        task_state: nextTaskState,
+        counts: tableCounts,
+        artifact_ids: artifactRows.map((row) => this.parseArtifact(row).id),
+        next_action: requested.outcome === 'completed' ? 'offer_skill_promotion' : 'none',
+      };
     }
 
     if (run.status !== 'running' || task.state !== 'testing') {
@@ -1082,6 +1686,22 @@ export class WorkbookService {
          WHERE tasks.workbook_id = ? ORDER BY runs.created_at`,
       )
       .all(workbookId);
+    const artifactRows = this.database
+      .prepare(
+        `SELECT artifacts.* FROM artifacts
+         JOIN runs ON runs.id = artifacts.run_id
+         JOIN tasks ON tasks.id = runs.task_id
+         WHERE tasks.workbook_id = ? ORDER BY artifacts.created_at`,
+      )
+      .all(workbookId);
+    const countRows = this.database
+      .prepare(
+        `SELECT tables.id, count(table_rows.id) AS count FROM tables
+         JOIN tasks ON tasks.id = tables.task_id
+         LEFT JOIN table_rows ON table_rows.table_id = tables.id
+         WHERE tasks.workbook_id = ? GROUP BY tables.id`,
+      )
+      .all(workbookId) as Array<{ id: string; count: number }>;
     const pendingQuestionRow = this.database
       .prepare(
         `SELECT * FROM agent_questions
@@ -1096,9 +1716,9 @@ export class WorkbookService {
       tables: tableRows.map((row) => this.parseTable(row)),
       runs: runRows.map((row) => this.parseRun(row)),
       pending_question: pendingQuestionRow ? this.parseAgentQuestion(pendingQuestionRow) : null,
-      artifacts: [],
+      artifacts: artifactRows.map((row) => this.parseArtifact(row)),
       generated_skills: [],
-      table_counts: {},
+      table_counts: Object.fromEntries(countRows.map((row) => [row.id, row.count])),
     });
   }
 
@@ -1160,6 +1780,15 @@ export class WorkbookService {
     return TableSchema.parse({
       ...stored,
       schema: JSON.parse(String(schemaJson)) as unknown,
+    });
+  }
+
+  private parseArtifact(row: unknown) {
+    if (!row || typeof row !== 'object') throw new Error('Artifact was not persisted');
+    const { metadata_json: metadataJson, ...stored } = row as Record<string, unknown>;
+    return ArtifactSchema.parse({
+      ...stored,
+      metadata: JSON.parse(String(metadataJson)) as unknown,
     });
   }
 
