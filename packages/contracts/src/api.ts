@@ -246,6 +246,49 @@ export const BrowserStatusResponseSchema = z.object({ data: BrowserStatusSchema 
 
 export const BrowserNavigateInputSchema = z.object({ url: BrowserUrlSchema }).strict();
 
+export const BrowserRunCodeInputSchema = z
+  .object({ code: z.string().min(1).max(30_000) })
+  .strict();
+
+const BrowserCoordinateSchema = z.number().int().min(0).max(10_000);
+
+export const BrowserInteractionInputSchema = z.discriminatedUnion('action', [
+  z
+    .object({
+      action: z.literal('click'),
+      x: BrowserCoordinateSchema,
+      y: BrowserCoordinateSchema,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('scroll'),
+      x: BrowserCoordinateSchema,
+      y: BrowserCoordinateSchema,
+      delta_x: z.number().int().min(-10_000).max(10_000),
+      delta_y: z.number().int().min(-10_000).max(10_000),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('type'),
+      text: z.string().min(1).max(4000),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('key'),
+      key: z
+        .string()
+        .min(1)
+        .max(50)
+        .regex(
+          /^(?:(?:Control|Alt|Shift|Meta)\+)*(?:[A-Za-z0-9]|Backspace|Delete|Enter|Escape|Tab|Arrow(?:Up|Down|Left|Right)|Page(?:Up|Down)|Home|End|[\x20-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E])$/,
+        ),
+    })
+    .strict(),
+]);
+
 export const PlaywrightToolResultSchema = CallToolResultSchema;
 
 export type PlaywrightToolResult = z.infer<typeof PlaywrightToolResultSchema>;
@@ -534,6 +577,8 @@ export type StartRunData = z.infer<typeof StartRunDataSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type BrowserStatus = z.infer<typeof BrowserStatusSchema>;
 export type BrowserNavigateInput = z.infer<typeof BrowserNavigateInputSchema>;
+export type BrowserRunCodeInput = z.infer<typeof BrowserRunCodeInputSchema>;
+export type BrowserInteractionInput = z.infer<typeof BrowserInteractionInputSchema>;
 export type BrowserStatusResponse = z.infer<typeof BrowserStatusResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;

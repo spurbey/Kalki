@@ -1,5 +1,6 @@
 import {
   ApiErrorResponseSchema,
+  BrowserInteractionInputSchema,
   HealthResponseSchema,
   BrowserNavigateInputSchema,
   BrowserStatusResponseSchema,
@@ -11,6 +12,7 @@ import {
   WorkbookSnapshotResponseSchema,
   type AgentQuestion,
   type AnswerQuestionInput,
+  type BrowserInteractionInput,
   type BrowserNavigateInput,
   type BrowserStatus,
   type CreateTurnInput,
@@ -84,6 +86,20 @@ export async function navigateBrowser(
     {
       method: "POST",
       body: JSON.stringify(BrowserNavigateInputSchema.parse(input)),
+    },
+  );
+  return response.data;
+}
+
+export async function interactBrowser(
+  input: BrowserInteractionInput,
+): Promise<BrowserStatus> {
+  const response = await request(
+    "/api/v1/browser/interact",
+    BrowserStatusResponseSchema,
+    {
+      method: "POST",
+      body: JSON.stringify(BrowserInteractionInputSchema.parse(input)),
     },
   );
   return response.data;

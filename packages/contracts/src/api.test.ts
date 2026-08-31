@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   AnswerQuestionInputSchema,
   CompleteRunInputSchema,
+  BrowserInteractionInputSchema,
   BrowserNavigateInputSchema,
+  BrowserRunCodeInputSchema,
   PlaywrightToolResultSchema,
   PublishBatchInputSchema,
   RegisterSchemaInputSchema,
@@ -113,6 +115,38 @@ describe('browser boundary', () => {
       }).success,
     ).toBe(false);
     expect(PlaywrightToolResultSchema.safeParse({ content: 'ok' }).success).toBe(false);
+  });
+
+  it('bounds browser interactions', () => {
+    expect(
+      BrowserInteractionInputSchema.safeParse({ action: 'click', x: 120, y: 80 })
+        .success,
+    ).toBe(true);
+    expect(
+      BrowserInteractionInputSchema.safeParse({
+        action: 'type',
+        text: 'a'.repeat(4001),
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserInteractionInputSchema.safeParse({
+        action: 'key',
+        key: 'Enter); process.exit()',
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserRunCodeInputSchema.safeParse({ code: 'async (page) => page.title()' })
+        .success,
+    ).toBe(true);
+    expect(
+      BrowserRunCodeInputSchema.safeParse({
+        code: `async (page) => page.keyboard.insertText(${JSON.stringify('\0'.repeat(4000))})`,
+      }).success,
+    ).toBe(true);
+    expect(
+      BrowserInteractionInputSchema.safeParse({ action: 'key', key: 'Control+[' })
+        .success,
+    ).toBe(true);
   });
 });
 
