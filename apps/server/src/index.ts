@@ -384,6 +384,17 @@ app.get("/api/v1/workbooks/:workbookId/events", (c) => {
 
   return streamSSE(c, async (stream) => {
     let cursor = initialCursor;
+    if (cursor === 0) {
+      const history = events.listHistory(workbookId.data);
+      for (const event of history.events) {
+        await stream.writeSSE({
+          id: String(event.seq),
+          event: event.type,
+          data: JSON.stringify(event),
+        });
+      }
+      cursor = history.cursor;
+    }
     while (!stream.aborted) {
       const available = events.listAfter(workbookId.data, cursor);
       for (const event of available) {
