@@ -1,5 +1,6 @@
 import {
   PlaywrightToolResultSchema,
+  type BrowserInteractionInput,
   type BrowserStatus,
   type PlaywrightToolResult,
 } from "@kalki/contracts";
@@ -135,6 +136,37 @@ export class PlaywrightBrowser {
       if (!image) throw new Error("Playwright did not return a screenshot");
       this.screenshotAt = new Date().toISOString();
       return image;
+    });
+  }
+
+  async interact(input: BrowserInteractionInput): Promise<BrowserStatus> {
+    return this.serialize(async () => {
+      let code: string;
+      if (input.action === "click") {
+        code = `async (page) => page.mouse.click(${input.x}, ${input.y})`;
+      } else if (input.action === "scroll") {
+        code = `async (page) => {
+          await page.mouse.move(${input.x}, ${input.y});
+          await page.mouse.wheel(${input.delta_x}, ${input.delta_y});
+        }`;
+      } else if (input.action === "type") {
+        code = `async (page) => page.keyboard.insertText(${JSON.stringify(input.text)})`;
+      } else {
+        code = `async (page) => page.keyboard.press(${JSON.stringify(input.key)})`;
+      }
+
+      await this.callTool("browser_run_code_unsafe", { code });
+      const tabs = await this.readTabs();
+      const aligned = await this.alignResearchTab(tabs);
+      const current = aligned.find((tab) => tab.current) ?? aligned[0];
+      return {
+        available: true,
+        url: current?.url ? current.url.slice(0, 4000) : null,
+        title: current?.title ? current.title.slice(0, 1000) : null,
+        tab_count: aligned.length,
+        screenshot_at: this.screenshotAt,
+        error: null,
+      } satisfies BrowserStatus;
     });
   }
 

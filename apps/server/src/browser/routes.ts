@@ -1,5 +1,6 @@
 import {
   ApiErrorResponseSchema,
+  BrowserInteractionInputSchema,
   BrowserNavigateInputSchema,
   BrowserStatusResponseSchema,
 } from "@kalki/contracts";
@@ -63,6 +64,33 @@ browserRoutes.post("/api/v1/browser/navigate", async (c) => {
     return c.json(
       BrowserStatusResponseSchema.parse({
         data: await browser.navigate(input.data.url),
+      }),
+    );
+  } catch (error) {
+    throw unavailable(error);
+  }
+});
+
+browserRoutes.post("/api/v1/browser/interact", async (c) => {
+  const input = BrowserInteractionInputSchema.safeParse(await c.req.json());
+  if (!input.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: "invalid_request",
+          message: "Browser interaction is invalid",
+          path: [],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+  try {
+    return c.json(
+      BrowserStatusResponseSchema.parse({
+        data: await browser.interact(input.data),
       }),
     );
   } catch (error) {
