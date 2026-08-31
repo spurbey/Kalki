@@ -17,9 +17,24 @@ function toolName(value: JsonValue): string {
     return value.toolInfo.name;
   if (isObject(value.tool_info) && typeof value.tool_info.name === "string")
     return value.tool_info.name;
-  if (isObject(value.function) && typeof value.function.name === "string")
+  if (isObject(value.function) && typeof value.function.name === "string") {
+    const nestedName = nestedToolName(value.function.arguments);
+    if (nestedName) return nestedName;
     return value.function.name;
+  }
   return "Tool call";
+}
+
+function nestedToolName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as JsonValue;
+    if (!isObject(parsed)) return null;
+    if (typeof parsed.tool_name === "string") return parsed.tool_name;
+    return typeof parsed.name === "string" ? parsed.name : null;
+  } catch {
+    return null;
+  }
 }
 
 function toolDetail(value: JsonValue): string {
@@ -164,8 +179,11 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
           const name = toolName(call);
           if (name !== "Tool call") tool.title = name;
           const detail = toolDetail(call);
-          if (detail)
+          if (detail) {
             tool.detail = `${tool.detail ?? ""}${detail}`.slice(0, 1200);
+            const nestedName = nestedToolName(tool.detail);
+            if (nestedName) tool.title = nestedName;
+          }
           if (id) toolById.set(id, tool);
         }
       }
