@@ -709,6 +709,9 @@ describe("workbook persistence", () => {
       );
       expect(secondPage.rows).toHaveLength(2);
       expect(secondPage.next_cursor).toBeNull();
+      expect(
+        [...firstPage.rows, ...secondPage.rows].map((row) => row.dedupe_key),
+      ).toEqual(sourceSamples.map((row) => row.dedupe_key));
 
       const otherTask = firstService.createTask(workbook.id, {
         slug: "other-task",

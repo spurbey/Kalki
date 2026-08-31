@@ -1642,6 +1642,14 @@ export class WorkbookService {
       const insertedCount = rows.filter((row) => !row.duplicate).length;
       const duplicateCount = rows.length - insertedCount;
       const publishedRowCount = run.published_row_count + insertedCount;
+      let nextPosition = (
+        this.database
+          .prepare(
+            `SELECT COALESCE(MAX(position), -1) + 1 AS position
+             FROM table_rows WHERE table_id = ? AND run_id = ?`,
+          )
+          .get(table.id, run.id) as { position: number }
+      ).position;
       const timestamp = new Date().toISOString();
       const batch = RunBatchSchema.parse({
         id: `batch_${randomUUID()}`,
@@ -1677,8 +1685,8 @@ export class WorkbookService {
       const insertRow = this.database.prepare(
         `INSERT INTO table_rows(
            id, table_id, run_id, batch_id, dedupe_key, data_json,
-           provenance_json, envelope_hash, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           provenance_json, envelope_hash, position, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const row of rows) {
         if (row.duplicate) continue;
@@ -1691,6 +1699,7 @@ export class WorkbookService {
           data: row.record.data,
           provenance: row.record.provenance,
           envelope_hash: row.envelopeHash,
+          position: nextPosition++,
           created_at: timestamp,
         });
         insertRow.run(
@@ -1702,6 +1711,7 @@ export class WorkbookService {
           canonicalJson(stored.data),
           canonicalJson(stored.provenance),
           stored.envelope_hash,
+          stored.position,
           stored.created_at,
         );
       }
@@ -2442,37 +2452,25 @@ export class WorkbookService {
       );
     }
 
-    let afterCreatedAt: string | null = null;
-    let afterId: string | null = null;
+    let afterPosition: number | null = null;
     if (after !== undefined) {
-      const separator = after.indexOf("|");
-      if (separator <= 0 || separator === after.length - 1) {
+      afterPosition = Number(after);
+      if (!Number.isSafeInteger(afterPosition) || afterPosition < 0) {
         throw new DomainError("Row cursor is invalid", "invalid_cursor", 400);
       }
-      afterCreatedAt = after.slice(0, separator);
-      afterId = after.slice(separator + 1);
     }
 
     const rows = this.database
       .prepare(
         `SELECT * FROM table_rows
          WHERE table_id = ? AND run_id = ?
-           AND (
-             ? IS NULL OR created_at > ?
-             OR (created_at = ? AND id > ?)
-           )
-         ORDER BY created_at ASC, id ASC
+           AND (? IS NULL OR position > ?)
+         ORDER BY position ASC
          LIMIT ?`,
       )
-      .all(
-        table.id,
-        run.id,
-        afterCreatedAt,
-        afterCreatedAt,
-        afterCreatedAt,
-        afterId,
-        limit + 1,
-      ) as Array<Record<string, unknown>>;
+      .all(table.id, run.id, afterPosition, afterPosition, limit + 1) as Array<
+      Record<string, unknown>
+    >;
     const page = rows.slice(0, limit).map((row) => {
       const {
         data_json: dataJson,
@@ -2490,8 +2488,7 @@ export class WorkbookService {
       table_id: table.id,
       run_id: run.id,
       rows: page,
-      next_cursor:
-        rows.length > limit && last ? `${last.created_at}|${last.id}` : null,
+      next_cursor: rows.length > limit && last ? String(last.position) : null,
     };
   }
 

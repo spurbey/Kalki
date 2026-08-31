@@ -437,6 +437,7 @@ export const TableRowSchema = z
     data: JsonObjectSchema,
     provenance: ProvenanceSchema,
     envelope_hash: Sha256Schema,
+    position: z.number().int().nonnegative(),
     created_at: TimestampSchema,
   })
   .strict();

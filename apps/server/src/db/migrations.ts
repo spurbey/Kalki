@@ -208,4 +208,30 @@ export const migrations = [
         ON artifacts(run_id, created_at);
     `,
   },
+  {
+    version: 6,
+    sql: `
+      ALTER TABLE table_rows
+        ADD COLUMN position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0);
+
+      WITH ranked AS (
+        SELECT
+          rowid AS source_rowid,
+          ROW_NUMBER() OVER (
+            PARTITION BY table_id, run_id
+            ORDER BY rowid
+          ) - 1 AS position
+        FROM table_rows
+      )
+      UPDATE table_rows
+      SET position = (
+        SELECT ranked.position
+        FROM ranked
+        WHERE ranked.source_rowid = table_rows.rowid
+      );
+
+      CREATE UNIQUE INDEX idx_table_rows_table_run_position
+        ON table_rows(table_id, run_id, position);
+    `,
+  },
 ] as const;
