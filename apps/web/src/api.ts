@@ -8,6 +8,7 @@ import {
   TaskResponseSchema,
   TrueForgeTurnResponseSchema,
   WorkbookEventSchema,
+  WorkbookHeartbeatSchema,
   WorkbookResponseSchema,
   WorkbookSnapshotResponseSchema,
   type AgentQuestion,
@@ -235,6 +236,12 @@ export function subscribeWorkbookEvents(
   };
 
   for (const type of streamedEventTypes) source.addEventListener(type, handle);
+  source.addEventListener("heartbeat", (message) => {
+    if (!(message instanceof MessageEvent)) return;
+    if (WorkbookHeartbeatSchema.safeParse(JSON.parse(message.data)).success) {
+      onStatus("live");
+    }
+  });
   source.addEventListener("message", handle);
   source.onopen = () => onStatus("live");
   source.onerror = () => onStatus("reconnecting");

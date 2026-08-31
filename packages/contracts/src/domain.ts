@@ -484,6 +484,12 @@ export const WorkbookEventSchema = z
   })
   .strict();
 
+export const WorkbookHeartbeatSchema = z
+  .object({
+    after: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const WorkbookSnapshotSchema = z
   .object({
     workbook: WorkbookSchema,
@@ -510,4 +516,5 @@ export type TableRow = z.infer<typeof TableRowSchema>;
 export type Artifact = z.infer<typeof ArtifactSchema>;
 export type GeneratedSkill = z.infer<typeof GeneratedSkillSchema>;
 export type WorkbookEvent = z.infer<typeof WorkbookEventSchema>;
+export type WorkbookHeartbeat = z.infer<typeof WorkbookHeartbeatSchema>;
 export type WorkbookSnapshot = z.infer<typeof WorkbookSnapshotSchema>;

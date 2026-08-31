@@ -15,6 +15,7 @@ import {
   type TrueForgeStreamEvent,
   TrueForgeTurnResponseSchema,
   WorkbookResponseSchema,
+  WorkbookHeartbeatSchema,
   WorkbookSnapshotResponseSchema,
 } from "@kalki/contracts";
 import { Hono } from "hono";
@@ -397,7 +398,7 @@ app.get("/api/v1/workbooks/:workbookId/events", (c) => {
       await stream.writeSSE({
         id: String(cursor),
         event: "heartbeat",
-        data: JSON.stringify({ after: cursor }),
+        data: JSON.stringify(WorkbookHeartbeatSchema.parse({ after: cursor })),
       });
     }
     while (!stream.aborted) {
@@ -414,7 +415,9 @@ app.get("/api/v1/workbooks/:workbookId/events", (c) => {
         await stream.writeSSE({
           id: String(cursor),
           event: "heartbeat",
-          data: JSON.stringify({ after: cursor }),
+          data: JSON.stringify(
+            WorkbookHeartbeatSchema.parse({ after: cursor }),
+          ),
         });
       }
       await stream.sleep(1000);
