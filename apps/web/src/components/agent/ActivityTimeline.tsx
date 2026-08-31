@@ -23,6 +23,14 @@ function Marker({ item }: { item: ActivityItem }) {
   return <CheckCircle2 size={14} />;
 }
 
+function BlockedMarkdownImage({ alt }: { alt?: string }) {
+  return (
+    <span className="activity-item__image-placeholder">
+      {alt ? `[Image: ${alt}]` : "[Image omitted]"}
+    </span>
+  );
+}
+
 export function ActivityTimeline({ items }: { items: ActivityItem[] }) {
   return items.map((item) => {
     if (item.kind === "reasoning") {
@@ -67,7 +75,14 @@ export function ActivityTimeline({ items }: { items: ActivityItem[] }) {
           </div>
           {item.kind === "assistant" ? (
             <div className="activity-item__content">
-              <Markdown options={{ disableParsingRawHTML: true }}>
+              <Markdown
+                options={{
+                  disableParsingRawHTML: true,
+                  overrides: {
+                    img: { component: BlockedMarkdownImage },
+                  },
+                }}
+              >
                 {item.text}
               </Markdown>
             </div>
