@@ -291,6 +291,40 @@ describe("workbook persistence", () => {
       expect(service.getSnapshot(workbook.id).tasks[0]?.state).toBe(
         "awaiting_task_confirmation",
       );
+
+      database
+        .prepare(
+          "UPDATE tasks SET state = 'awaiting_production_confirmation' WHERE id = ?",
+        )
+        .run(task.id);
+      service.savePendingQuestion(workbook.id, {
+        ...question,
+        gateKind: "production_review",
+        questionEventId: "event-production-revise",
+        toolCallId: "tool-production-revise",
+        questionText: "Publish this changed pipeline?",
+      });
+      const revision = {
+        ...answer,
+        question_event_id: "event-production-revise",
+        answer: "Retest the changed pipeline first.",
+        decision: "revise" as const,
+        gate_kind: "production_review" as const,
+      };
+      service.markQuestionSubmitting(
+        workbook.id,
+        "tool-production-revise",
+        revision,
+      );
+      service.completeQuestion(
+        workbook.id,
+        "tool-production-revise",
+        revision,
+        "turn-question",
+      );
+      expect(service.getSnapshot(workbook.id).tasks[0]?.state).toBe(
+        "awaiting_production_confirmation",
+      );
     } finally {
       database.close();
       rmSync(directory, { recursive: true, force: true });
@@ -675,6 +709,9 @@ describe("workbook persistence", () => {
       );
       expect(secondPage.rows).toHaveLength(2);
       expect(secondPage.next_cursor).toBeNull();
+      expect(
+        [...firstPage.rows, ...secondPage.rows].map((row) => row.dedupe_key),
+      ).toEqual(sourceSamples.map((row) => row.dedupe_key));
 
       const otherTask = firstService.createTask(workbook.id, {
         slug: "other-task",

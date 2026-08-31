@@ -208,7 +208,7 @@ describe('run and review commands', () => {
     ).toBe(false);
   });
 
-  it('requires a related run for a production-review answer', () => {
+  it('requires a related run only for production approval', () => {
     const answer = {
       question_event_id: 'event_1',
       question_turn_id: 'turn_1',
@@ -223,6 +223,13 @@ describe('run and review commands', () => {
       AnswerQuestionInputSchema.safeParse({
         ...answer,
         related_run_id: 'run_1',
+      }).success,
+    ).toBe(true);
+    expect(
+      AnswerQuestionInputSchema.safeParse({
+        ...answer,
+        answer: 'Retest the changed pipeline first.',
+        decision: 'revise',
       }).success,
     ).toBe(true);
   });
