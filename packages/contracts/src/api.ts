@@ -247,7 +247,7 @@ export const BrowserStatusResponseSchema = z.object({ data: BrowserStatusSchema 
 export const BrowserNavigateInputSchema = z.object({ url: BrowserUrlSchema }).strict();
 
 export const BrowserRunCodeInputSchema = z
-  .object({ code: z.string().min(1).max(20_000) })
+  .object({ code: z.string().min(1).max(30_000) })
   .strict();
 
 const BrowserCoordinateSchema = z.number().int().min(0).max(10_000);
@@ -278,7 +278,13 @@ export const BrowserInteractionInputSchema = z.discriminatedUnion('action', [
   z
     .object({
       action: z.literal('key'),
-      key: z.string().min(1).max(50).regex(/^[A-Za-z0-9+]+$/),
+      key: z
+        .string()
+        .min(1)
+        .max(50)
+        .regex(
+          /^(?:(?:Control|Alt|Shift|Meta)\+)*(?:[A-Za-z0-9]|Backspace|Delete|Enter|Escape|Tab|Arrow(?:Up|Down|Left|Right)|Page(?:Up|Down)|Home|End|[\x20-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E])$/,
+        ),
     })
     .strict(),
 ]);

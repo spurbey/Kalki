@@ -138,6 +138,15 @@ describe('browser boundary', () => {
       BrowserRunCodeInputSchema.safeParse({ code: 'async (page) => page.title()' })
         .success,
     ).toBe(true);
+    expect(
+      BrowserRunCodeInputSchema.safeParse({
+        code: `async (page) => page.keyboard.insertText(${JSON.stringify('\0'.repeat(4000))})`,
+      }).success,
+    ).toBe(true);
+    expect(
+      BrowserInteractionInputSchema.safeParse({ action: 'key', key: 'Control+[' })
+        .success,
+    ).toBe(true);
   });
 });
 

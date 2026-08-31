@@ -64,7 +64,7 @@ export function ResearchView() {
   const pendingMutations = useRef(0);
   const imageRef = useRef<HTMLImageElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
-  const interactionQueue = useRef<Promise<void>>(Promise.resolve());
+  const mutationQueue = useRef<Promise<void>>(Promise.resolve());
   const textBuffer = useRef("");
   const textTimer = useRef<number | null>(null);
   const wheelBuffer = useRef({ x: 0, y: 0, deltaX: 0, deltaY: 0 });
@@ -122,8 +122,8 @@ export function ResearchView() {
 
   const queueInteraction = useCallback((input: BrowserInteractionInput) => {
     pendingMutations.current += 1;
-    interactionQueue.current = interactionQueue.current.then(async () => {
-      const request = ++mutationRequest.current;
+    const request = ++mutationRequest.current;
+    mutationQueue.current = mutationQueue.current.then(async () => {
       try {
         const next = await api.interactBrowser(input);
         if (request !== mutationRequest.current) return;
@@ -167,24 +167,27 @@ export function ResearchView() {
 
   const navigate = async (event: FormEvent) => {
     event.preventDefault();
-    if (!url.trim()) return;
+    const target = url.trim();
+    if (!target) return;
     setBusy(true);
     pendingMutations.current += 1;
     const request = ++mutationRequest.current;
-    try {
-      const next = await api.navigateBrowser({ url: url.trim() });
-      if (request !== mutationRequest.current) return;
-      setStatus(next);
-      setUrl("");
-      refreshScreenshot();
-      setError("");
-    } catch (cause) {
-      if (request !== mutationRequest.current) return;
-      setError(cause instanceof Error ? cause.message : "Navigation failed");
-    } finally {
-      pendingMutations.current -= 1;
-      setBusy(false);
-    }
+    mutationQueue.current = mutationQueue.current.then(async () => {
+      try {
+        const next = await api.navigateBrowser({ url: target });
+        setUrl("");
+        if (request !== mutationRequest.current) return;
+        setStatus(next);
+        refreshScreenshot();
+        setError("");
+      } catch (cause) {
+        if (request !== mutationRequest.current) return;
+        setError(cause instanceof Error ? cause.message : "Navigation failed");
+      } finally {
+        pendingMutations.current -= 1;
+        setBusy(false);
+      }
+    });
   };
 
   const available = status?.available === true;
