@@ -11,15 +11,41 @@ export type ActivityItem = {
   status?: "running" | "success" | "error";
 };
 
+const maxToolArgumentsForName = 64_000;
+
 function toolName(value: JsonValue): string {
   if (!isObject(value)) return "Tool call";
-  if (isObject(value.toolInfo) && typeof value.toolInfo.name === "string")
-    return value.toolInfo.name;
-  if (isObject(value.tool_info) && typeof value.tool_info.name === "string")
-    return value.tool_info.name;
-  if (isObject(value.function) && typeof value.function.name === "string")
-    return value.function.name;
+  const toolInfoName =
+    isObject(value.toolInfo) && typeof value.toolInfo.name === "string"
+      ? value.toolInfo.name
+      : isObject(value.tool_info) && typeof value.tool_info.name === "string"
+        ? value.tool_info.name
+        : null;
+  const functionName =
+    isObject(value.function) && typeof value.function.name === "string"
+      ? value.function.name
+      : null;
+  if (toolInfoName === "call_tool" || functionName === "call_tool") {
+    const nestedName = nestedToolName(
+      isObject(value.function) ? value.function.arguments : null,
+    );
+    if (nestedName) return nestedName;
+  }
+  if (toolInfoName) return toolInfoName;
+  if (functionName) return functionName;
   return "Tool call";
+}
+
+function nestedToolName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as JsonValue;
+    if (!isObject(parsed)) return null;
+    if (typeof parsed.tool_name === "string") return parsed.tool_name;
+    return typeof parsed.name === "string" ? parsed.name : null;
+  } catch {
+    return null;
+  }
 }
 
 function toolDetail(value: JsonValue): string {
@@ -63,6 +89,7 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
   const reasoningById = new Map<string, ActivityItem>();
   const toolById = new Map<string, ActivityItem>();
   const toolBySlot = new Map<string, ActivityItem>();
+  const toolArgumentsBySlot = new Map<string, string>();
 
   for (const stored of [...events].sort(
     (left, right) => left.seq - right.seq,
@@ -164,8 +191,20 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
           const name = toolName(call);
           if (name !== "Tool call") tool.title = name;
           const detail = toolDetail(call);
-          if (detail)
-            tool.detail = `${tool.detail ?? ""}${detail}`.slice(0, 1200);
+          if (detail) {
+            const argumentsText = `${toolArgumentsBySlot.get(slot) ?? ""}${detail}`;
+            toolArgumentsBySlot.set(
+              slot,
+              argumentsText.slice(0, maxToolArgumentsForName),
+            );
+            tool.detail = argumentsText.slice(0, 1200);
+            if (tool.title === "call_tool") {
+              const nestedName = nestedToolName(
+                toolArgumentsBySlot.get(slot),
+              );
+              if (nestedName) tool.title = nestedName;
+            }
+          }
           if (id) toolById.set(id, tool);
         }
       }
