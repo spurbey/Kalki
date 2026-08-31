@@ -1,0 +1,120 @@
+@media (max-width: 980px) {
+  .topbar {
+    grid-template-columns: minmax(160px, 1fr) auto;
+  }
+
+  .topbar__status {
+    display: none;
+  }
+
+  .workspace-shell {
+    grid-template-columns: minmax(320px, 0.76fr) minmax(480px, 1.24fr);
+  }
+
+  .workspace-view:not(.workspace-view--research) {
+    padding-inline: 20px;
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    height: 100dvh;
+  }
+
+  .topbar {
+    min-height: 52px;
+    padding-inline: 10px;
+  }
+
+  .mobile-switch {
+    display: grid;
+    min-height: 42px;
+    grid-template-columns: repeat(2, 1fr);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    padding: 5px;
+  }
+
+  .mobile-switch button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 650;
+  }
+
+  .mobile-switch__active {
+    background: var(--surface-muted) !important;
+    color: var(--ink) !important;
+  }
+
+  .workspace-shell {
+    display: block;
+    min-height: 0;
+  }
+
+  .workspace-shell__agent,
+  .workspace-shell__book {
+    display: none;
+    height: 100%;
+    border: 0;
+  }
+
+  .workspace-shell__mobile-active {
+    display: block;
+  }
+
+  .activity-feed {
+    padding: 13px;
+  }
+
+  .workspace-view:not(.workspace-view--research) {
+    padding: 18px 14px 26px;
+  }
+
+  .fact-grid,
+  .table-controls,
+  .run-row dl {
+    grid-template-columns: 1fr;
+  }
+
+  .fact-grid__wide {
+    grid-column: auto;
+  }
+
+  .view-heading {
+    align-items: flex-start;
+  }
+
+  .create-workbook {
+    padding: 18px;
+  }
+
+  .create-workbook__mark {
+    top: 16px;
+    left: 17px;
+  }
+
+  .create-workbook__form {
+    padding: 25px 21px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

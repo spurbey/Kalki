@@ -15,7 +15,9 @@ export function ArtifactsView({ snapshot }: { snapshot: WorkbookSnapshot }) {
           <p className="eyebrow">Run outputs</p>
           <h2>Artifacts</h2>
         </div>
-        <StatusPill value={`${snapshot.artifacts.length} files`} />
+        <StatusPill
+          value={`${snapshot.artifacts.length} ${snapshot.artifacts.length === 1 ? "file" : "files"}`}
+        />
       </section>
       <div className="artifact-list">
         {snapshot.artifacts.map((artifact) => (

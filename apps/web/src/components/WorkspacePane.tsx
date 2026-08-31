@@ -67,7 +67,7 @@ export function WorkspacePane({
           );
         })}
       </nav>
-      <div className="workspace-view">
+      <div className={`workspace-view workspace-view--${activeView}`}>
         {activeView === "research" ? <ResearchView /> : null}
         {activeView === "task" ? (
           <TaskView

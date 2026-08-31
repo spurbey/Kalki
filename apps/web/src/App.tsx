@@ -133,10 +133,7 @@ export function App() {
       <header className="topbar">
         <div className="brand-block">
           <span className="brand-mark">K</span>
-          <div>
-            <strong>{snapshot.workbook.title}</strong>
-            <span>Kalki</span>
-          </div>
+          <strong>{snapshot.workbook.title}</strong>
         </div>
         <div className="topbar__status">
           {task ? (
@@ -155,8 +152,8 @@ export function App() {
           )}
           {activeRun ? (
             <span className="run-summary">
-              <span>{activeRun.mode}</span>
-              {label(activeRun.status)}
+              <strong>{label(activeRun.mode)}</strong>
+              <span>{label(activeRun.status)}</span>
             </span>
           ) : null}
           <span
