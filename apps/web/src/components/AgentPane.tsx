@@ -55,10 +55,19 @@ function QuestionPrompt({
     "revise",
     "cancel",
   ];
-  const choices = question.options.map((answer, index) => ({
-    answer,
-    decision: allowsCustom ? "free_text" : (reviewDecisions[index] ?? "revise"),
-  }));
+  const choices = question.options.map((answer, index) => {
+    const decision = allowsCustom
+      ? "free_text"
+      : (reviewDecisions[index] ?? "revise");
+    return {
+      answer,
+      decision,
+      disabled:
+        question.gate_kind === "production_review" &&
+        !question.run_id &&
+        decision === "approve",
+    };
+  });
   const answer = custom.trim() || selected?.answer || "";
   const decision = custom.trim() ? "free_text" : selected?.decision;
 
@@ -89,7 +98,12 @@ function QuestionPrompt({
                 setSelected(choice);
                 setCustom("");
               }}
-              disabled={busy}
+              disabled={busy || choice.disabled}
+              title={
+                choice.disabled
+                  ? "Create the production run before approving it"
+                  : undefined
+              }
             >
               <span className="question-option__radio">
                 {selected?.answer === choice.answer ? (
