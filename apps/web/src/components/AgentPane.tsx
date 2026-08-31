@@ -257,7 +257,9 @@ export function AgentPane({
               </div>
               <div className="activity-item__body">
                 <div className="activity-item__meta">
-                  <strong>{item.title}</strong>
+                  <strong>
+                    {item.kind === "tool" ? label(item.title) : item.title}
+                  </strong>
                   <time>{formatTime(item.timestamp)}</time>
                 </div>
                 {item.kind === "reasoning" ? (

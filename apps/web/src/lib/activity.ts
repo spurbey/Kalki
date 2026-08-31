@@ -11,17 +11,28 @@ export type ActivityItem = {
   status?: "running" | "success" | "error";
 };
 
+const maxToolArgumentsForName = 64_000;
+
 function toolName(value: JsonValue): string {
   if (!isObject(value)) return "Tool call";
-  if (isObject(value.toolInfo) && typeof value.toolInfo.name === "string")
-    return value.toolInfo.name;
-  if (isObject(value.tool_info) && typeof value.tool_info.name === "string")
-    return value.tool_info.name;
-  if (isObject(value.function) && typeof value.function.name === "string") {
-    const nestedName = nestedToolName(value.function.arguments);
+  const toolInfoName =
+    isObject(value.toolInfo) && typeof value.toolInfo.name === "string"
+      ? value.toolInfo.name
+      : isObject(value.tool_info) && typeof value.tool_info.name === "string"
+        ? value.tool_info.name
+        : null;
+  const functionName =
+    isObject(value.function) && typeof value.function.name === "string"
+      ? value.function.name
+      : null;
+  if (toolInfoName === "call_tool" || functionName === "call_tool") {
+    const nestedName = nestedToolName(
+      isObject(value.function) ? value.function.arguments : null,
+    );
     if (nestedName) return nestedName;
-    return value.function.name;
   }
+  if (toolInfoName) return toolInfoName;
+  if (functionName) return functionName;
   return "Tool call";
 }
 
@@ -78,6 +89,7 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
   const reasoningById = new Map<string, ActivityItem>();
   const toolById = new Map<string, ActivityItem>();
   const toolBySlot = new Map<string, ActivityItem>();
+  const toolArgumentsBySlot = new Map<string, string>();
 
   for (const stored of [...events].sort(
     (left, right) => left.seq - right.seq,
@@ -180,9 +192,18 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
           if (name !== "Tool call") tool.title = name;
           const detail = toolDetail(call);
           if (detail) {
-            tool.detail = `${tool.detail ?? ""}${detail}`.slice(0, 1200);
-            const nestedName = nestedToolName(tool.detail);
-            if (nestedName) tool.title = nestedName;
+            const argumentsText = `${toolArgumentsBySlot.get(slot) ?? ""}${detail}`;
+            toolArgumentsBySlot.set(
+              slot,
+              argumentsText.slice(0, maxToolArgumentsForName),
+            );
+            tool.detail = argumentsText.slice(0, 1200);
+            if (tool.title === "call_tool") {
+              const nestedName = nestedToolName(
+                toolArgumentsBySlot.get(slot),
+              );
+              if (nestedName) tool.title = nestedName;
+            }
           }
           if (id) toolById.set(id, tool);
         }
