@@ -394,6 +394,11 @@ app.get("/api/v1/workbooks/:workbookId/events", (c) => {
         });
       }
       cursor = history.cursor;
+      await stream.writeSSE({
+        id: String(cursor),
+        event: "heartbeat",
+        data: JSON.stringify({ after: cursor }),
+      });
     }
     while (!stream.aborted) {
       const available = events.listAfter(workbookId.data, cursor);
@@ -407,6 +412,7 @@ app.get("/api/v1/workbooks/:workbookId/events", (c) => {
       }
       if (available.length === 0) {
         await stream.writeSSE({
+          id: String(cursor),
           event: "heartbeat",
           data: JSON.stringify({ after: cursor }),
         });
