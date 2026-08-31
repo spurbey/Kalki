@@ -8,7 +8,7 @@
   }
 
   .workspace-shell {
-    grid-template-columns: minmax(320px, 0.76fr) minmax(480px, 1.24fr);
+    grid-template-columns: minmax(300px, 0.76fr) minmax(0, 1.24fr);
   }
 
   .workspace-view:not(.workspace-view--research) {
