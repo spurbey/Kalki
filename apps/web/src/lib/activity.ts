@@ -9,6 +9,7 @@ export type ActivityItem = {
   detail?: string | undefined;
   timestamp: string;
   status?: "running" | "success" | "error";
+  count?: number;
 };
 
 const maxToolArgumentsForName = 64_000;
@@ -25,27 +26,107 @@ function toolName(value: JsonValue): string {
     isObject(value.function) && typeof value.function.name === "string"
       ? value.function.name
       : null;
-  if (toolInfoName === "call_tool" || functionName === "call_tool") {
-    const nestedName = nestedToolName(
-      isObject(value.function) ? value.function.arguments : null,
-    );
-    if (nestedName) return nestedName;
-  }
   if (toolInfoName) return toolInfoName;
   if (functionName) return functionName;
   return "Tool call";
 }
 
-function nestedToolName(value: unknown): string | null {
+function parsedArguments(value: unknown) {
   if (typeof value !== "string") return null;
   try {
     const parsed = JSON.parse(value) as JsonValue;
-    if (!isObject(parsed)) return null;
-    if (typeof parsed.tool_name === "string") return parsed.tool_name;
-    return typeof parsed.name === "string" ? parsed.name : null;
+    return isObject(parsed) ? parsed : null;
   } catch {
     return null;
   }
+}
+
+function stringField(
+  value: JsonValue,
+  ...names: string[]
+): string | null {
+  if (!isObject(value)) return null;
+  for (const name of names) {
+    if (typeof value[name] === "string" && value[name].trim()) {
+      return value[name].trim();
+    }
+  }
+  return null;
+}
+
+function toolPresentation(
+  canonicalName: string,
+  argumentsText: string,
+): { title: string; text: string } {
+  const wrapper = parsedArguments(argumentsText);
+  const name =
+    canonicalName === "call_tool"
+      ? stringField(wrapper, "tool_name", "name") || canonicalName
+      : canonicalName;
+  const input =
+    wrapper && isObject(wrapper.input)
+      ? wrapper.input
+      : wrapper && isObject(wrapper.arguments)
+        ? wrapper.arguments
+        : wrapper;
+  const intent = stringField(input, "intent") || stringField(wrapper, "intent");
+  const url = stringField(input, "url") || stringField(wrapper, "url");
+  const path =
+    stringField(input, "path", "file_path", "task_path", "schema_path") ||
+    stringField(wrapper, "path", "file_path", "task_path", "schema_path");
+
+  if (name === "exec") {
+    return { title: "Bash", text: intent || "Run command" };
+  }
+  if (name === "browser_navigate") {
+    return { title: "Browser", text: url ? `Open ${url}` : "Open page" };
+  }
+  if (name === "browser_evaluate") {
+    return { title: "Browser", text: intent || "Inspect page" };
+  }
+  if (name === "browser_snapshot") {
+    return { title: "Browser", text: "Capture page structure" };
+  }
+  if (name === "browser_click") {
+    return {
+      title: "Browser",
+      text: `Click ${stringField(input, "element", "selector", "ref") || "page element"}`,
+    };
+  }
+  if (name === "browser_type") {
+    return {
+      title: "Browser",
+      text: `Type into ${stringField(input, "element", "selector", "ref") || "page"}`,
+    };
+  }
+
+  const workbookActions: Record<string, string> = {
+    get_workbook_context: "Load workbook context",
+    register_task: "Register task contract",
+    register_schema: "Register table schema",
+    start_run: "Start pipeline run",
+    get_production_authorization: "Check production authorization",
+    publish_batch: "Publish data batch",
+    record_artifact: "Record output artifact",
+    complete_run: "Complete pipeline run",
+    promote_skill: "Promote reusable skill",
+  };
+  if (workbookActions[name]) {
+    return { title: "Workbook", text: intent || workbookActions[name] };
+  }
+  if (name === "ask_user_question") {
+    return { title: "Review", text: "Request your input" };
+  }
+  if (name === "list_tools") {
+    return { title: "Tools", text: "Inspect available tools" };
+  }
+  if (canonicalName === "call_tool" && name === canonicalName) {
+    return { title: "Tool", text: "Prepare tool call" };
+  }
+  return {
+    title: "Tool",
+    text: intent || (path ? `${label(name)} ${path}` : label(name)),
+  };
 }
 
 function toolDetail(value: JsonValue): string {
@@ -89,6 +170,7 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
   const reasoningById = new Map<string, ActivityItem>();
   const toolById = new Map<string, ActivityItem>();
   const toolBySlot = new Map<string, ActivityItem>();
+  const toolNameBySlot = new Map<string, string>();
   const toolArgumentsBySlot = new Map<string, string>();
 
   for (const stored of [...events].sort(
@@ -103,6 +185,10 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
         : stored.type.replace(/^agent\./, "");
     const eventId =
       typeof wrapped.id === "string" ? wrapped.id : String(stored.seq);
+    const turnId =
+      typeof stored.payload.turn_id === "string"
+        ? stored.payload.turn_id
+        : eventId;
     const timestamp =
       typeof wrapped.createdAt === "string"
         ? wrapped.createdAt
@@ -128,21 +214,20 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
         contentText(wrapped.reasoning) ||
         contentText(wrapped.reasoning_content);
       if (reasoning) {
-        let item = reasoningById.get(eventId);
+        let item = reasoningById.get(turnId);
         if (!item) {
           item = {
-            key: `reasoning-${eventId}`,
+            key: `reasoning-${turnId}`,
             kind: "reasoning",
-            title: "Reasoning",
+            title: "Thought",
             text: "",
             timestamp,
           };
-          reasoningById.set(eventId, item);
+          reasoningById.set(turnId, item);
           items.push(item);
         }
-        item.text = eventType.endsWith(".delta")
-          ? `${item.text}${reasoning}`
-          : reasoning;
+        if (eventType.endsWith(".delta")) item.text += reasoning;
+        else if (!item.text) item.text = reasoning;
       }
 
       const text = content.text;
@@ -175,21 +260,23 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
               : "0";
           const slot = `${eventId}-${index}`;
           const id = typeof call.id === "string" ? call.id : null;
+          const nextName = toolName(call);
+          if (nextName !== "Tool call") toolNameBySlot.set(slot, nextName);
+          const canonicalName = toolNameBySlot.get(slot) ?? "Tool call";
           let tool = toolBySlot.get(slot);
           if (!tool) {
+            const presentation = toolPresentation(canonicalName, "");
             tool = {
               key: `tool-${id ?? slot}`,
               kind: "tool",
-              title: toolName(call),
-              text: "Running",
+              title: presentation.title,
+              text: presentation.text,
               timestamp,
               status: "running",
             };
             toolBySlot.set(slot, tool);
             items.push(tool);
           }
-          const name = toolName(call);
-          if (name !== "Tool call") tool.title = name;
           const detail = toolDetail(call);
           if (detail) {
             const argumentsText = `${toolArgumentsBySlot.get(slot) ?? ""}${detail}`;
@@ -198,13 +285,13 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
               argumentsText.slice(0, maxToolArgumentsForName),
             );
             tool.detail = argumentsText.slice(0, 1200);
-            if (tool.title === "call_tool") {
-              const nestedName = nestedToolName(
-                toolArgumentsBySlot.get(slot),
-              );
-              if (nestedName) tool.title = nestedName;
-            }
           }
+          const presentation = toolPresentation(
+            canonicalName,
+            toolArgumentsBySlot.get(slot) ?? "",
+          );
+          tool.title = presentation.title;
+          tool.text = presentation.text;
           if (id) toolById.set(id, tool);
         }
       }
@@ -220,8 +307,8 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
             : eventId;
       const existing = toolById.get(callId);
       if (existing) {
-        existing.status = "success";
-        existing.text = "Completed";
+        const failed = wrapped.isError === true || wrapped.is_error === true;
+        existing.status = failed ? "error" : "success";
         existing.detail =
           contentText(wrapped.content).slice(0, 1200) || existing.detail;
       } else {
@@ -229,7 +316,7 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
           key: `tool-response-${stored.seq}`,
           kind: "tool",
           title: "Tool response",
-          text: "Completed",
+          text: "Return tool output",
           detail: contentText(wrapped.content).slice(0, 1200),
           timestamp,
           status: "success",
@@ -257,14 +344,6 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
           });
         }
       }
-      items.push({
-        key: `status-${stored.seq}`,
-        kind: "status",
-        title: "Turn started",
-        text: "TrueForge is working",
-        timestamp,
-        status: "running",
-      });
       continue;
     }
 
@@ -273,14 +352,16 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
         isObject(wrapped.state) && typeof wrapped.state.status === "string"
           ? wrapped.state.status
           : "done";
-      items.push({
-        key: `status-${stored.seq}`,
-        kind: state === "error" ? "error" : "status",
-        title: state === "error" ? "Turn failed" : "Turn finished",
-        text: label(state),
-        timestamp,
-        status: state === "error" ? "error" : "success",
-      });
+      if (state !== "done") {
+        items.push({
+          key: `status-${stored.seq}`,
+          kind: state === "error" ? "error" : "status",
+          title: state === "error" ? "Turn failed" : "Turn stopped",
+          text: label(state),
+          timestamp,
+          status: state === "error" ? "error" : "success",
+        });
+      }
       continue;
     }
 
@@ -288,13 +369,14 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
       items.push({
         key: `status-${stored.seq}`,
         kind: "status",
-        title: "Sandbox ready",
-        text:
+        title: "Workspace",
+        text: "Daytona sandbox ready",
+        detail:
           typeof wrapped.sandboxId === "string"
             ? wrapped.sandboxId
             : typeof wrapped.sandbox_id === "string"
               ? wrapped.sandbox_id
-              : "Daytona workspace created",
+              : undefined,
         timestamp,
         status: "success",
       });
@@ -316,17 +398,26 @@ export function activityFromEvents(events: WorkbookEvent[]): ActivityItem[] {
       continue;
     }
 
-    if (eventType === "mcp.initialize") {
-      items.push({
-        key: `status-${stored.seq}`,
-        kind: "status",
-        title: "Tools connected",
-        text: "MCP tools initialized",
-        timestamp,
-        status: "success",
-      });
-    }
+    if (eventType === "mcp.initialize") continue;
   }
 
-  return items.filter((item) => item.text || item.kind === "tool");
+  const visible = items.filter((item) => item.text || item.kind === "tool");
+  const compacted: ActivityItem[] = [];
+  for (const item of visible) {
+    const previous = compacted.at(-1);
+    if (
+      item.kind === "tool" &&
+      previous?.kind === "tool" &&
+      previous.title === item.title &&
+      previous.text === item.text &&
+      previous.status === item.status
+    ) {
+      previous.count = (previous.count ?? 1) + 1;
+      previous.timestamp = item.timestamp;
+      previous.detail = item.detail ?? previous.detail;
+      continue;
+    }
+    compacted.push(item);
+  }
+  return compacted;
 }

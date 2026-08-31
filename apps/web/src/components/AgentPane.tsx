@@ -1,23 +1,15 @@
 import type {
-  AgentQuestion,
   AnswerQuestionInput,
   WorkbookEvent,
   WorkbookSnapshot,
 } from "@kalki/contracts";
 import {
-  Activity,
   Bot,
-  BrainCircuit,
-  Check,
-  CheckCircle2,
-  CircleAlert,
   Link2,
   LoaderCircle,
-  MessageSquare,
   Send,
   Unplug,
   Wifi,
-  XCircle,
 } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -28,122 +20,11 @@ import {
 } from "react";
 import type { StreamStatus } from "../api.js";
 import { activityFromEvents } from "../lib/activity.js";
-import { formatTime, label } from "../lib/format.js";
+import { label } from "../lib/format.js";
+import { ActivityTimeline } from "./agent/ActivityTimeline.js";
+import { QuestionPrompt } from "./agent/QuestionPrompt.js";
 import { EmptyState } from "./common.js";
 import { WorkflowProgress } from "./WorkflowProgress.js";
-
-function QuestionPrompt({
-  question,
-  busy,
-  onAnswer,
-}: {
-  question: AgentQuestion;
-  busy: boolean;
-  onAnswer: (
-    answer: string,
-    decision: AnswerQuestionInput["decision"],
-  ) => Promise<void>;
-}) {
-  const [selected, setSelected] = useState<{
-    answer: string;
-    decision: AnswerQuestionInput["decision"];
-  } | null>(null);
-  const [custom, setCustom] = useState("");
-  const allowsCustom = question.gate_kind === "clarification";
-  const reviewDecisions: AnswerQuestionInput["decision"][] = [
-    "approve",
-    "revise",
-    "cancel",
-  ];
-  const choices = question.options.map((answer, index) => {
-    const decision = allowsCustom
-      ? "free_text"
-      : (reviewDecisions[index] ?? "revise");
-    return {
-      answer,
-      decision,
-      disabled:
-        question.gate_kind === "production_review" &&
-        !question.run_id &&
-        decision === "approve",
-    };
-  });
-  const answer = custom.trim() || selected?.answer || "";
-  const decision = custom.trim() ? "free_text" : selected?.decision;
-
-  useEffect(() => {
-    setSelected(null);
-    setCustom("");
-  }, [question.id]);
-
-  return (
-    <section className="question-prompt">
-      <div className="question-prompt__header">
-        <CircleAlert size={17} />
-        <span>{label(question.gate_kind)}</span>
-      </div>
-      <p>{question.question_text}</p>
-      {question.options.length ? (
-        <div className="question-options">
-          {choices.map((choice) => (
-            <button
-              key={choice.answer}
-              type="button"
-              className={
-                selected?.answer === choice.answer
-                  ? "question-option question-option--selected"
-                  : "question-option"
-              }
-              onClick={() => {
-                setSelected(choice);
-                setCustom("");
-              }}
-              disabled={busy || choice.disabled}
-              title={
-                choice.disabled
-                  ? "Create the production run before approving it"
-                  : undefined
-              }
-            >
-              <span className="question-option__radio">
-                {selected?.answer === choice.answer ? (
-                  <Check size={12} />
-                ) : null}
-              </span>
-              {choice.answer}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {allowsCustom ? (
-        <textarea
-          name="answer"
-          rows={2}
-          value={custom}
-          onChange={(event) => {
-            setCustom(event.target.value);
-            setSelected(null);
-          }}
-          placeholder="Type your answer"
-          disabled={busy}
-        />
-      ) : null}
-      <button
-        className="button button--primary button--small"
-        type="button"
-        disabled={busy || !answer || !decision}
-        onClick={() => decision && onAnswer(answer, decision)}
-      >
-        {busy ? (
-          <LoaderCircle className="spin" size={15} />
-        ) : (
-          <Send size={15} />
-        )}
-        Submit answer
-      </button>
-    </section>
-  );
-}
 
 export function AgentPane({
   snapshot,
@@ -200,8 +81,8 @@ export function AgentPane({
     <section className="agent-pane">
       <header className="pane-header">
         <div>
-          <p className="eyebrow">TrueForge coordinator</p>
-          <h2>Agent activity</h2>
+          <p className="eyebrow">Kalki agent</p>
+          <h2>{snapshot.tasks[0]?.title ?? "New research task"}</h2>
         </div>
         <span className={`stream-state stream-state--${streamStatus}`}>
           {streamStatus === "live" ? (
@@ -237,48 +118,7 @@ export function AgentPane({
         ) : activity.length === 0 ? (
           <EmptyState icon={<Bot size={21} />} title="No agent activity" />
         ) : (
-          activity.map((item) => (
-            <article
-              key={item.key}
-              className={`activity-item activity-item--${item.kind}`}
-            >
-              <div className="activity-item__marker">
-                {item.kind === "assistant" ? <Bot size={15} /> : null}
-                {item.kind === "reasoning" ? <BrainCircuit size={15} /> : null}
-                {item.kind === "user" ? <MessageSquare size={15} /> : null}
-                {item.kind === "tool" ? <Activity size={15} /> : null}
-                {item.kind === "error" ? <XCircle size={15} /> : null}
-                {item.kind === "status" && item.status === "running" ? (
-                  <LoaderCircle className="spin" size={15} />
-                ) : null}
-                {item.kind === "status" && item.status !== "running" ? (
-                  <CheckCircle2 size={15} />
-                ) : null}
-              </div>
-              <div className="activity-item__body">
-                <div className="activity-item__meta">
-                  <strong>
-                    {item.kind === "tool" ? label(item.title) : item.title}
-                  </strong>
-                  <time>{formatTime(item.timestamp)}</time>
-                </div>
-                {item.kind === "reasoning" ? (
-                  <details className="activity-item__reasoning">
-                    <summary>View reasoning</summary>
-                    <p>{item.text}</p>
-                  </details>
-                ) : (
-                  <p>{item.text}</p>
-                )}
-                {item.detail ? (
-                  <details>
-                    <summary>Details</summary>
-                    <pre>{item.detail}</pre>
-                  </details>
-                ) : null}
-              </div>
-            </article>
-          ))
+          <ActivityTimeline items={activity} />
         )}
         {pending ? (
           <QuestionPrompt question={pending} busy={busy} onAnswer={onAnswer} />
