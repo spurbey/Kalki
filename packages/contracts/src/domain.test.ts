@@ -6,6 +6,7 @@ import {
   RecordEnvelopeSchema,
   RunSchema,
   TrueForgeStreamEventSchema,
+  WorkbookHeartbeatSchema,
   WorkbookSnapshotSchema,
   WorkspaceRelativePathSchema,
 } from './domain.js';
@@ -106,6 +107,13 @@ describe('TrueForge stream events', () => {
     expect(TrueForgeStreamEventSchema.safeParse({ type: 'x'.repeat(94) }).success).toBe(true);
     expect(TrueForgeStreamEventSchema.safeParse({ type: 'x'.repeat(95) }).success).toBe(false);
     expect(TrueForgeStreamEventSchema.safeParse({ type: 'turn\ncreated' }).success).toBe(false);
+  });
+});
+
+describe('workbook heartbeat', () => {
+  it('accepts only non-negative event cursors', () => {
+    expect(WorkbookHeartbeatSchema.safeParse({ after: 0 }).success).toBe(true);
+    expect(WorkbookHeartbeatSchema.safeParse({ after: -1 }).success).toBe(false);
   });
 });
 

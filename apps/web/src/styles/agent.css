@@ -237,6 +237,11 @@
   text-underline-offset: 2px;
 }
 
+.activity-item__image-placeholder {
+  color: var(--faint);
+  font-style: italic;
+}
+
 .activity-item__content code {
   font: 0.72rem/1.45 "Cascadia Code", Consolas, monospace;
 }
