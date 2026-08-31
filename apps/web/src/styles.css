@@ -666,7 +666,8 @@ label {
   white-space: nowrap;
 }
 
-.activity-item__body > p {
+.activity-item__body > p,
+.activity-item__reasoning p {
   margin-top: 4px;
   color: #354039;
   font-size: 0.82rem;
@@ -677,6 +678,11 @@ label {
 
 .activity-item__body details {
   margin-top: 7px;
+}
+
+.activity-item__reasoning summary {
+  display: inline-flex;
+  padding: 2px 0;
 }
 
 .activity-item__body summary {

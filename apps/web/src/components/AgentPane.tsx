@@ -260,7 +260,14 @@ export function AgentPane({
                   <strong>{item.title}</strong>
                   <time>{formatTime(item.timestamp)}</time>
                 </div>
-                <p>{item.text}</p>
+                {item.kind === "reasoning" ? (
+                  <details className="activity-item__reasoning">
+                    <summary>View reasoning</summary>
+                    <p>{item.text}</p>
+                  </details>
+                ) : (
+                  <p>{item.text}</p>
+                )}
                 {item.detail ? (
                   <details>
                     <summary>Details</summary>
