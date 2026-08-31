@@ -4,6 +4,7 @@ import {
   CompleteRunInputSchema,
   BrowserInteractionInputSchema,
   BrowserNavigateInputSchema,
+  BrowserRunCodeInputSchema,
   PlaywrightToolResultSchema,
   PublishBatchInputSchema,
   RegisterSchemaInputSchema,
@@ -133,6 +134,10 @@ describe('browser boundary', () => {
         key: 'Enter); process.exit()',
       }).success,
     ).toBe(false);
+    expect(
+      BrowserRunCodeInputSchema.safeParse({ code: 'async (page) => page.title()' })
+        .success,
+    ).toBe(true);
   });
 });
 

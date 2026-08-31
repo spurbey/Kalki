@@ -1,4 +1,5 @@
 import {
+  BrowserRunCodeInputSchema,
   PlaywrightToolResultSchema,
   type BrowserInteractionInput,
   type BrowserStatus,
@@ -155,7 +156,10 @@ export class PlaywrightBrowser {
         code = `async (page) => page.keyboard.press(${JSON.stringify(input.key)})`;
       }
 
-      await this.callTool("browser_run_code_unsafe", { code });
+      await this.callTool(
+        "browser_run_code_unsafe",
+        BrowserRunCodeInputSchema.parse({ code }),
+      );
       const tabs = await this.readTabs();
       const aligned = await this.alignResearchTab(tabs);
       const current = aligned.find((tab) => tab.current) ?? aligned[0];

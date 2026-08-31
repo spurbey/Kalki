@@ -27,6 +27,7 @@ const supportedBrowserKeys = new Set([
   "Home",
   "End",
 ]);
+const MAX_BROWSER_TEXT_LENGTH = 4000;
 
 function browserPoint(
   image: HTMLImageElement,
@@ -59,7 +60,8 @@ export function ResearchView() {
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const statusRequest = useRef(0);
+  const mutationRequest = useRef(0);
+  const pendingMutations = useRef(0);
   const imageRef = useRef<HTMLImageElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const interactionQueue = useRef<Promise<void>>(Promise.resolve());
@@ -70,14 +72,25 @@ export function ResearchView() {
   const screenshotTimer = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
-    const request = ++statusRequest.current;
+    if (pendingMutations.current > 0) return;
+    const request = mutationRequest.current;
     try {
       const next = await api.getBrowserStatus();
-      if (request !== statusRequest.current) return;
+      if (
+        request !== mutationRequest.current ||
+        pendingMutations.current > 0
+      ) {
+        return;
+      }
       setStatus(next);
       setError("");
     } catch {
-      if (request !== statusRequest.current) return;
+      if (
+        request !== mutationRequest.current ||
+        pendingMutations.current > 0
+      ) {
+        return;
+      }
       setStatus(null);
       setError("Shared browser is unavailable");
     }
@@ -108,19 +121,22 @@ export function ResearchView() {
   }, []);
 
   const queueInteraction = useCallback((input: BrowserInteractionInput) => {
+    pendingMutations.current += 1;
     interactionQueue.current = interactionQueue.current.then(async () => {
-      const request = ++statusRequest.current;
+      const request = ++mutationRequest.current;
       try {
         const next = await api.interactBrowser(input);
-        if (request !== statusRequest.current) return;
+        if (request !== mutationRequest.current) return;
         setStatus(next);
         refreshScreenshot();
         setError("");
       } catch (cause) {
-        if (request !== statusRequest.current) return;
+        if (request !== mutationRequest.current) return;
         setError(
           cause instanceof Error ? cause.message : "Browser interaction failed",
         );
+      } finally {
+        pendingMutations.current -= 1;
       }
     });
   }, [refreshScreenshot]);
@@ -130,7 +146,12 @@ export function ResearchView() {
     textTimer.current = null;
     const text = textBuffer.current;
     textBuffer.current = "";
-    if (text) queueInteraction({ action: "type", text });
+    for (let offset = 0; offset < text.length; offset += MAX_BROWSER_TEXT_LENGTH) {
+      queueInteraction({
+        action: "type",
+        text: text.slice(offset, offset + MAX_BROWSER_TEXT_LENGTH),
+      });
+    }
   }, [queueInteraction]);
 
   useEffect(
@@ -148,18 +169,20 @@ export function ResearchView() {
     event.preventDefault();
     if (!url.trim()) return;
     setBusy(true);
-    const request = ++statusRequest.current;
+    pendingMutations.current += 1;
+    const request = ++mutationRequest.current;
     try {
       const next = await api.navigateBrowser({ url: url.trim() });
-      if (request !== statusRequest.current) return;
+      if (request !== mutationRequest.current) return;
       setStatus(next);
       setUrl("");
       refreshScreenshot();
       setError("");
     } catch (cause) {
-      if (request !== statusRequest.current) return;
+      if (request !== mutationRequest.current) return;
       setError(cause instanceof Error ? cause.message : "Navigation failed");
     } finally {
+      pendingMutations.current -= 1;
       setBusy(false);
     }
   };
@@ -206,9 +229,16 @@ export function ResearchView() {
       if (event.key.length !== 1) return;
       event.preventDefault();
       flushText();
+      const modifiers: string[] = [];
+      if (event.ctrlKey) modifiers.push("Control");
+      if (event.altKey) modifiers.push("Alt");
+      if (event.shiftKey) modifiers.push("Shift");
+      if (event.metaKey) modifiers.push("Meta");
       queueInteraction({
         action: "key",
-        key: `${event.metaKey ? "Meta" : "Control"}+${event.key.toUpperCase()}`,
+        key: [...modifiers, event.key.length === 1 ? event.key.toUpperCase() : event.key].join(
+          "+",
+        ),
       });
       return;
     }
@@ -222,9 +252,12 @@ export function ResearchView() {
     if (!supportedBrowserKeys.has(event.key)) return;
     event.preventDefault();
     flushText();
+    const modifiers: string[] = [];
+    if (event.altKey) modifiers.push("Alt");
+    if (event.shiftKey) modifiers.push("Shift");
     queueInteraction({
       action: "key",
-      key: event.shiftKey ? `Shift+${event.key}` : event.key,
+      key: [...modifiers, event.key].join("+"),
     });
   };
 

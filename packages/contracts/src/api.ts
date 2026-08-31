@@ -246,6 +246,10 @@ export const BrowserStatusResponseSchema = z.object({ data: BrowserStatusSchema 
 
 export const BrowserNavigateInputSchema = z.object({ url: BrowserUrlSchema }).strict();
 
+export const BrowserRunCodeInputSchema = z
+  .object({ code: z.string().min(1).max(20_000) })
+  .strict();
+
 const BrowserCoordinateSchema = z.number().int().min(0).max(10_000);
 
 export const BrowserInteractionInputSchema = z.discriminatedUnion('action', [
@@ -567,6 +571,7 @@ export type StartRunData = z.infer<typeof StartRunDataSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type BrowserStatus = z.infer<typeof BrowserStatusSchema>;
 export type BrowserNavigateInput = z.infer<typeof BrowserNavigateInputSchema>;
+export type BrowserRunCodeInput = z.infer<typeof BrowserRunCodeInputSchema>;
 export type BrowserInteractionInput = z.infer<typeof BrowserInteractionInputSchema>;
 export type BrowserStatusResponse = z.infer<typeof BrowserStatusResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
