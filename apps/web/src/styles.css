@@ -679,6 +679,15 @@ label {
   margin-top: 7px;
 }
 
+.activity-item__reasoning summary {
+  display: inline-flex;
+  padding: 2px 0;
+}
+
+.activity-item__reasoning p {
+  margin-top: 7px;
+}
+
 .activity-item__body summary {
   color: var(--muted);
   cursor: pointer;
