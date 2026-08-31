@@ -14,7 +14,7 @@ export function RunsView({ runs }: { runs: Run[] }) {
           <p className="eyebrow">Execution history</p>
           <h2>Runs</h2>
         </div>
-        <StatusPill value={`${runs.length} total`} />
+        <StatusPill value={`${runs.length} runs`} />
       </section>
       <div className="run-list">
         {[...runs]

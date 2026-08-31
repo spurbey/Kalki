@@ -74,7 +74,7 @@ export function TablesView({ snapshot }: { snapshot: WorkbookSnapshot }) {
           <p className="eyebrow">Committed data</p>
           <h2>Formal tables</h2>
         </div>
-        <StatusPill value={`${rows.length} loaded`} />
+        <StatusPill value={`${rows.length} rows`} />
       </section>
       <div className="table-controls">
         <label>

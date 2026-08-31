@@ -266,10 +266,10 @@ export function ResearchView() {
 
   return (
     <div className="research-view">
-      <header className="view-heading research-heading">
-        <div>
-          <p className="eyebrow">Shared browser</p>
-          <h2>Research</h2>
+      <div className="browser-tabbar">
+        <div className="browser-tab">
+          <Globe2 size={15} />
+          <strong>{status?.title || "Browsing"}</strong>
         </div>
         <div className="browser-state">
           <span
@@ -293,7 +293,7 @@ export function ResearchView() {
             <RefreshCw size={16} />
           </button>
         </div>
-      </header>
+      </div>
 
       <form className="browser-toolbar" onSubmit={navigate}>
         <Globe2 size={17} />
@@ -328,10 +328,6 @@ export function ResearchView() {
         </div>
       ) : available ? (
         <div className="browser-frame">
-          <div className="browser-frame__meta">
-            <strong>{status.title || "Untitled page"}</strong>
-            <span>{status.url || "about:blank"}</span>
-          </div>
           <div
             ref={screenRef}
             className="browser-frame__screen"

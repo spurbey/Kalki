@@ -1,0 +1,237 @@
+:root {
+  color: #20221f;
+  background: #f5f5f2;
+  font-family: Aptos, "Segoe UI Variable", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --paper: #f5f5f2;
+  --surface: #ffffff;
+  --surface-subtle: #fafaf8;
+  --surface-muted: #f0f1ed;
+  --ink: #20221f;
+  --muted: #686b66;
+  --faint: #92958f;
+  --line: #dedfda;
+  --line-strong: #c9cbc5;
+  --green: #176c50;
+  --green-hover: #115a42;
+  --green-soft: #e8f3ed;
+  --blue: #386b8a;
+  --blue-soft: #edf3f7;
+  --amber: #936819;
+  --amber-soft: #faf1dd;
+  --red: #ad493d;
+  --red-soft: #faece9;
+  --shadow: 0 10px 28px rgb(31 34 30 / 8%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100dvh;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #4d8b72;
+  outline-offset: 2px;
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: 1.85rem;
+  font-weight: 650;
+  line-height: 1.12;
+}
+
+h2 {
+  font-size: 1.24rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+h3 {
+  font-size: 0.88rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+input,
+select {
+  min-height: 38px;
+  padding: 0 11px;
+}
+
+textarea {
+  padding: 10px 11px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: #50534e;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.mono {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.button,
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  cursor: pointer;
+}
+
+.button {
+  min-height: 38px;
+  gap: 7px;
+  border-radius: 6px;
+  padding: 0 14px;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.button:active:not(:disabled),
+.icon-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.button--primary {
+  background: var(--green);
+  color: white;
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--green-hover);
+}
+
+.button--secondary {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.button--secondary:hover:not(:disabled),
+.icon-button:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.button--small {
+  min-height: 32px;
+  padding-inline: 11px;
+  font-size: 0.75rem;
+}
+
+.icon-button {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+}
+
+.icon-button--primary {
+  border-color: var(--green);
+  background: var(--green);
+  color: white;
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

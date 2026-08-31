@@ -17,7 +17,9 @@ export function SchemaView({ tables }: { tables: KalkiTable[] }) {
           <p className="eyebrow">Registered output</p>
           <h2>Schemas</h2>
         </div>
-        <StatusPill value={`${tables.length} tables`} />
+        <StatusPill
+          value={`${tables.length} ${tables.length === 1 ? "table" : "tables"}`}
+        />
       </section>
       <div className="definition-list">
         {tables.map((table) => {
