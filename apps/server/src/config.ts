@@ -25,7 +25,7 @@ export const config = {
     process.env.TRUEFORGE_BASE_URL ?? "http://127.0.0.1:8790"
   ).replace(/\/+$/, ""),
   playwrightMcpUrl: (
-    process.env.KALKI_PLAYWRIGHT_MCP_URL ?? "http://localhost:8931/mcp"
+    process.env.KALKI_PLAYWRIGHT_MCP_URL ?? "http://127.0.0.1:8931/mcp"
   ).replace(/\/+$/, ""),
   agentModel: process.env.KALKI_AGENT_MODEL?.trim() ?? "",
   attachFrameworkSkill: process.env.KALKI_ATTACH_SKILL === "true",
