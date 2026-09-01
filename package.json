@@ -12,6 +12,7 @@
   },
   "scripts": {
     "dev": "npm run build -w @kalki/contracts && concurrently -k -n server,web \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:browser": "npx --yes @playwright/mcp@0.0.79 --port 8931 --host 0.0.0.0 --browser chrome --user-data-dir .data/browser-profile --output-dir .data/browser-output --shared-browser-context --allowed-hosts host.docker.internal:8931,localhost:8931,127.0.0.1:8931",
     "dev:web": "npm run dev -w @kalki/web",
     "dev:server": "npm run dev -w @kalki/server",
     "build": "npm run build -w @kalki/contracts && npm run build -w @kalki/server && npm run build -w @kalki/web",
