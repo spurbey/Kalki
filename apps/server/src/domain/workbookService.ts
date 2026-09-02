@@ -352,6 +352,35 @@ export class WorkbookService {
     return row ? this.parseTrueForgeTurn(row) : null;
   }
 
+  /** Current turns still marked running, oldest first, for stream recovery. */
+  listRunningTrueForgeTurns(): {
+    workbookId: string;
+    sessionId: string;
+    turnId: string;
+  }[] {
+    const rows = this.database
+      .prepare(
+        `SELECT workbooks.id AS workbook_id,
+                workbooks.trueforge_session_id AS session_id,
+                trueforge_turns.id AS turn_id
+         FROM workbooks
+         JOIN trueforge_turns ON trueforge_turns.id = workbooks.current_trueforge_turn_id
+         WHERE workbooks.trueforge_session_id IS NOT NULL
+           AND trueforge_turns.status = 'running'
+         ORDER BY trueforge_turns.updated_at ASC`,
+      )
+      .all() as {
+      workbook_id: string;
+      session_id: string;
+      turn_id: string;
+    }[];
+    return rows.map((row) => ({
+      workbookId: row.workbook_id,
+      sessionId: row.session_id,
+      turnId: row.turn_id,
+    }));
+  }
+
   saveTrueForgeTurn(workbookId: string, input: TrueForgeTurnInput) {
     const turn = TrueForgeTurnInputSchema.parse(input);
     const workbook = this.getWorkbook(workbookId);
@@ -660,6 +689,39 @@ export class WorkbookService {
           .run(question.id);
       })();
     }
+  }
+
+  /**
+   * Retires a question whose turn died before an answer could reach TrueForge.
+   * Questions already being submitted are left to the answer endpoint, which
+   * owns its own rollback.
+   */
+  invalidateQuestionsForTurn(
+    workbookId: string,
+    turnId: string,
+  ): AgentQuestion[] {
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM agent_questions
+         WHERE workbook_id = ? AND question_turn_id = ? AND status = 'pending'
+         ORDER BY created_at ASC`,
+      )
+      .all(workbookId, turnId);
+    const questions = rows.map((row) => this.parseAgentQuestion(row));
+    if (questions.length === 0) return [];
+
+    const retired: AgentQuestion[] = [];
+    this.database.transaction(() => {
+      const update = this.database.prepare(
+        "UPDATE agent_questions SET status = 'invalidated' WHERE id = ? AND status = 'pending'",
+      );
+      for (const question of questions) {
+        if (update.run(question.id).changes === 0) continue;
+        retired.push({ ...question, status: "invalidated" });
+      }
+    })();
+
+    return retired;
   }
 
   completeQuestion(
