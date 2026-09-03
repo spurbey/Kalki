@@ -25,7 +25,12 @@ import {
   WorkbookSnapshotSchema,
   WorkspaceRelativePathSchema,
 } from './domain.js';
-import { RunModeSchema, RunStatusSchema, TableKindSchema } from './states.js';
+import {
+  RunModeSchema,
+  RunStatusSchema,
+  TableKindSchema,
+  TaskStateSchema,
+} from './states.js';
 
 const TaskMarkdownSchema = z
   .string()
@@ -327,6 +332,70 @@ export const TrueForgeTurnListResponseSchema = z
   })
   .passthrough();
 export const WorkbookSnapshotResponseSchema = z.object({ data: WorkbookSnapshotSchema }).strict();
+const EvaluationEvidenceSchema = z
+  .object({
+    seq: z.number().int().positive(),
+    turn_id: IdSchema.nullable(),
+  })
+  .strict();
+const EvaluationRepeatSchema = z
+  .object({
+    action: z.string().min(1).max(200),
+    count: z.number().int().min(2),
+    first_seq: z.number().int().positive(),
+    last_seq: z.number().int().positive(),
+    evidence: z.array(EvaluationEvidenceSchema).max(10),
+  })
+  .strict();
+const EvaluationFindingSchema = z
+  .object({
+    kind: z.enum(['repetition', 'tool_failure', 'incomplete']),
+    message: z.string().min(1).max(500),
+    evidence: z.array(EvaluationEvidenceSchema).max(10),
+  })
+  .strict();
+export const WorkbookEvaluationSchema = z
+  .object({
+    workbook_id: IdSchema,
+    task_id: IdSchema.nullable(),
+    event_count: z.number().int().nonnegative(),
+    turn_count: z.number().int().nonnegative(),
+    tool_calls: z
+      .object({
+        total: z.number().int().nonnegative(),
+        unique_signatures: z.number().int().nonnegative(),
+        failed_responses: z.number().int().nonnegative(),
+        action_counts: z
+          .array(
+            z
+              .object({
+                action: z.string().min(1).max(200),
+                count: z.number().int().positive(),
+              })
+              .strict(),
+          )
+          .max(15),
+      })
+      .strict(),
+    workflow: z
+      .object({
+        task_state: TaskStateSchema.nullable(),
+        checkpoints: z.array(z.string().min(1).max(100)).max(30),
+        terminal_status: TrueForgeTurnStatusSchema.nullable(),
+      })
+      .strict(),
+    repetition: z
+      .object({
+        consecutive: z.array(EvaluationRepeatSchema).max(10),
+        repeated_reads: z.array(EvaluationRepeatSchema).max(10),
+      })
+      .strict(),
+    findings: z.array(EvaluationFindingSchema).max(10),
+  })
+  .strict();
+export const WorkbookEvaluationResponseSchema = z
+  .object({ data: WorkbookEvaluationSchema })
+  .strict();
 export const TableRowsQuerySchema = z
   .object({
     run_id: IdSchema,
@@ -619,6 +688,10 @@ export type TrueForgeTurnListPagination = z.infer<
 >;
 export type TrueForgeTurnListResponse = z.infer<typeof TrueForgeTurnListResponseSchema>;
 export type WorkbookSnapshotResponse = z.infer<typeof WorkbookSnapshotResponseSchema>;
+export type WorkbookEvaluation = z.infer<typeof WorkbookEvaluationSchema>;
+export type WorkbookEvaluationResponse = z.infer<
+  typeof WorkbookEvaluationResponseSchema
+>;
 export type TableRowsQuery = z.infer<typeof TableRowsQuerySchema>;
 export type TableRowsResponse = z.infer<typeof TableRowsResponseSchema>;
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;

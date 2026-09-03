@@ -13,6 +13,7 @@ import {
   TrueForgeTurnResponseSchema,
   WorkbookResponseSchema,
   WorkbookHeartbeatSchema,
+  WorkbookEvaluationResponseSchema,
   WorkbookSnapshotResponseSchema,
 } from "@kalki/contracts";
 import { Hono } from "hono";
@@ -22,6 +23,7 @@ import { config } from "./config.js";
 import { openDatabase } from "./db/database.js";
 import { DomainError } from "./domain/errors.js";
 import { WorkbookService } from "./domain/workbookService.js";
+import { evaluateWorkbook } from "./evaluation/agentEvaluator.js";
 import { EventStore } from "./events/eventStore.js";
 import { startWorkbookMcp } from "./mcp/workbookServer.js";
 import { TrueForgeClient } from "./trueforge/sessionClient.js";
@@ -242,6 +244,30 @@ app.get("/api/v1/workbooks/:workbookId/events", (c) => {
       await stream.sleep(1000);
     }
   });
+});
+
+app.get("/api/v1/workbooks/:workbookId/evaluation", (c) => {
+  const workbookId = IdSchema.safeParse(c.req.param("workbookId"));
+  if (!workbookId.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: "invalid_request",
+          message: "Invalid workbook id",
+          path: ["workbookId"],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+  const snapshot = workbooks.getSnapshot(workbookId.data);
+  return c.json(
+    WorkbookEvaluationResponseSchema.parse({
+      data: evaluateWorkbook(events.listHistory(workbookId.data).events, snapshot),
+    }),
+  );
 });
 
 app.get("/api/v1/tables/:tableId/rows", (c) => {
