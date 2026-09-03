@@ -2,6 +2,7 @@ import {
   IdSchema,
   type TrueForgeStreamEvent,
   TrueForgeStreamEventSchema,
+  TrueForgeTurnListResponseSchema,
   type TrueForgeTurnInput,
   TrueForgeTurnInputSchema,
 } from "@kalki/contracts";
@@ -257,6 +258,13 @@ export class TrueForgeClient {
               newline = buffer.indexOf("\n");
             }
           }
+        } catch (error) {
+          try {
+            await reader.cancel(error);
+          } catch {
+            // The body may already be errored or closed; keep the original failure.
+          }
+          throw error;
         } finally {
           reader.releaseLock();
         }
@@ -443,15 +451,10 @@ export class TrueForgeClient {
       `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns?limit=25`,
       { signal: AbortSignal.timeout(requestTimeoutMs) },
     );
-    const payload = await this.readJson(response, "turn list");
-    if (!payload || typeof payload !== "object" || !("data" in payload)) {
-      throw new Error("TrueForge turn list did not include data");
-    }
-    const data = (payload as { data?: unknown }).data;
-    if (!Array.isArray(data)) {
-      throw new Error("TrueForge turn list data was invalid");
-    }
-    return data.map((turn) => this.parseTurn({ data: turn }));
+    const payload = TrueForgeTurnListResponseSchema.parse(
+      await this.readJson(response, "turn list"),
+    );
+    return payload.data.map((turn) => this.parseTurn({ data: turn }));
   }
 
   async deleteSession(sessionId: string): Promise<void> {

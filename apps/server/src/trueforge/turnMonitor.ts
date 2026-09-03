@@ -1,4 +1,4 @@
-import type { TrueForgeTurnInput } from "@kalki/contracts";
+import type { GateKind, TrueForgeTurnInput } from "@kalki/contracts";
 import { DomainError } from "../domain/errors.js";
 import type { WorkbookService } from "../domain/workbookService.js";
 import { compactAgentEvent } from "../events/agentEvent.js";
@@ -9,13 +9,6 @@ import type {
 } from "./sessionClient.js";
 
 const sweepIntervalMs = 30_000;
-
-type GateKind =
-  | "clarification"
-  | "task_review"
-  | "schema_review"
-  | "production_review"
-  | "skill_promotion_review";
 
 const gateOptions: Partial<Record<GateKind, string[]>> = {
   task_review: ["Approve task", "Request changes", "Cancel task"],
@@ -44,6 +37,7 @@ function gateKindForTaskState(state: string): GateKind {
  */
 export class TurnMonitor {
   private readonly streaming = new Map<string, Promise<void>>();
+  private readonly reconciling = new Map<string, Promise<void>>();
   private sweepTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -113,7 +107,7 @@ export class TurnMonitor {
     }
 
     try {
-      await this.reconcile(workbookId, sessionId, turnId);
+      await this.reconcileOnce(workbookId, sessionId, turnId);
     } catch (error) {
       console.error(`Could not reconcile turn ${turnId}`, error);
     }
@@ -133,7 +127,11 @@ export class TurnMonitor {
     if (current.status === "running") {
       void this.watch(workbookId, workbook.trueforge_session_id, current.id);
     }
-    await this.reconcile(workbookId, workbook.trueforge_session_id, current.id);
+    await this.reconcileOnce(
+      workbookId,
+      workbook.trueforge_session_id,
+      current.id,
+    );
   }
 
   async recordPendingQuestion(workbookId: string, turn: TrueForgeTurnInput) {
@@ -210,6 +208,23 @@ export class TurnMonitor {
     }
   }
 
+  private reconcileOnce(
+    workbookId: string,
+    sessionId: string,
+    turnId: string,
+  ): Promise<void> {
+    const active = this.reconciling.get(turnId);
+    if (active) return active;
+
+    const attempt = this.reconcile(workbookId, sessionId, turnId).finally(
+      () => {
+        this.reconciling.delete(turnId);
+      },
+    );
+    this.reconciling.set(turnId, attempt);
+    return attempt;
+  }
+
   private async reconcile(
     workbookId: string,
     sessionId: string,
@@ -246,6 +261,12 @@ export class TurnMonitor {
 
   /** Reconciles every turn still marked running, resuming lost streams. */
   async sweep() {
+    try {
+      await this.recoverSubmittingQuestions();
+    } catch (error) {
+      console.error("Could not recover question submissions", error);
+    }
+
     let live: ReturnType<WorkbookService["listRunningTrueForgeTurns"]>;
     try {
       live = this.workbooks.listRunningTrueForgeTurns();
@@ -257,7 +278,7 @@ export class TurnMonitor {
     for (const turn of live) {
       if (this.streaming.has(turn.turnId)) continue;
       try {
-        await this.reconcile(turn.workbookId, turn.sessionId, turn.turnId);
+        await this.reconcileOnce(turn.workbookId, turn.sessionId, turn.turnId);
         const current = this.workbooks.getCurrentTrueForgeTurn(turn.workbookId);
         if (current?.id === turn.turnId && current.status === "running") {
           void this.watch(turn.workbookId, turn.sessionId, turn.turnId);

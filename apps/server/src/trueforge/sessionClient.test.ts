@@ -10,12 +10,16 @@ class FakeStream {
   readonly ok = true;
   readonly status = 200;
   readonly body: ReadableStream<Uint8Array>;
+  cancelled = false;
   private controller!: ReadableStreamDefaultController<Uint8Array>;
 
   constructor(signal: AbortSignal) {
     this.body = new ReadableStream<Uint8Array>({
       start: (controller) => {
         this.controller = controller;
+      },
+      cancel: () => {
+        this.cancelled = true;
       },
     });
     signal.addEventListener("abort", () =>
@@ -178,6 +182,36 @@ describe("turn subscription", () => {
 
     expect((await failure)?.message).toMatch(/ended before turn.done/);
     expect(transport.requests).toHaveLength(3);
+  });
+
+  it("cancels the response body when event handling fails", async () => {
+    vi.useFakeTimers();
+    const transport = fakeTransport();
+    let firstEvent = true;
+    const subscription = client().subscribeToTurn(
+      sessionId,
+      turnId,
+      0,
+      async () => {
+        if (firstEvent) {
+          firstEvent = false;
+          throw new Error("event handler failed");
+        }
+      },
+    );
+
+    const first = await transport.next();
+    first.push(1, "model.message");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    const second = await transport.next();
+    second.push(2, "turn.done");
+    await vi.advanceTimersByTimeAsync(0);
+    await subscription;
+
+    expect(first.cancelled).toBe(true);
+    expect(transport.requests).toHaveLength(2);
   });
 });
 

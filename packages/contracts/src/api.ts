@@ -7,6 +7,7 @@ import {
   GateKindSchema,
   GeneratedSkillSchema,
   IdSchema,
+  JsonValueSchema,
   JsonObjectSchema,
   MAX_SAFE_JSON_NUMBER,
   MAX_TABLES_PER_TASK,
@@ -296,6 +297,9 @@ export type PlaywrightToolResult = z.infer<typeof PlaywrightToolResultSchema>;
 export const WorkbookResponseSchema = z.object({ data: WorkbookSchema }).strict();
 export const TaskResponseSchema = z.object({ data: TaskSchema }).strict();
 export const TrueForgeTurnResponseSchema = z.object({ data: TrueForgeTurnSchema }).strict();
+export const TrueForgeTurnListResponseSchema = z
+  .object({ data: z.array(JsonValueSchema) })
+  .passthrough();
 export const WorkbookSnapshotResponseSchema = z.object({ data: WorkbookSnapshotSchema }).strict();
 export const TableRowsQuerySchema = z
   .object({
@@ -583,6 +587,7 @@ export type BrowserStatusResponse = z.infer<typeof BrowserStatusResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
 export type TrueForgeTurnResponse = z.infer<typeof TrueForgeTurnResponseSchema>;
+export type TrueForgeTurnListResponse = z.infer<typeof TrueForgeTurnListResponseSchema>;
 export type WorkbookSnapshotResponse = z.infer<typeof WorkbookSnapshotResponseSchema>;
 export type TableRowsQuery = z.infer<typeof TableRowsQuerySchema>;
 export type TableRowsResponse = z.infer<typeof TableRowsResponseSchema>;

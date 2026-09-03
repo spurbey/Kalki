@@ -123,6 +123,25 @@ describe("turn monitoring", () => {
     });
   });
 
+  it("does not reconcile a current turn twice while starting its watcher", async () => {
+    const client = {
+      subscribeToTurn: vi.fn(async () => {}),
+      getTurn: vi.fn(async () => finished("cancelled")),
+      getPendingQuestion: vi.fn(async () => null),
+    };
+    const { workbookId, workbooks, events, monitor } = harness(client);
+    workbooks.saveTrueForgeTurn(workbookId, upstreamTurn());
+
+    await monitor.refreshCurrent(workbookId);
+
+    expect(client.getTurn).toHaveBeenCalledTimes(1);
+    expect(
+      events
+        .listAfter(workbookId, 0)
+        .filter((event) => event.type === "agent.turn.abandoned"),
+    ).toHaveLength(1);
+  });
+
   it("recovers a running turn whose stream was never established", async () => {
     const client = {
       subscribeToTurn: vi.fn(async () => {}),
@@ -167,5 +186,48 @@ describe("turn monitoring", () => {
     expect(
       workbooks.getCurrentTrueForgeTurn(workbookId)?.last_sequence_number,
     ).toBe(2);
+  });
+
+  it("recovers a submitted answer during a periodic sweep", async () => {
+    const answerTurnId = "turn_founders_answer";
+    const client = {
+      listTurns: vi.fn(async () => [
+        upstreamTurn({
+          id: answerTurnId,
+          previousTurnId: turnId,
+          status: "done",
+          finishedAt: "2026-09-01T02:40:00.000Z",
+        }),
+      ]),
+      getTurn: vi.fn(),
+      getPendingQuestion: vi.fn(),
+    };
+    const { workbookId, workbooks, monitor } = harness(client);
+    workbooks.saveTrueForgeTurn(workbookId, upstreamTurn({ status: "done" }));
+    const question = workbooks.savePendingQuestion(workbookId, {
+      taskId: null,
+      runId: null,
+      gateKind: "clarification",
+      questionTurnId: turnId,
+      questionEventId: "event-submitting",
+      toolCallId: "call-submitting",
+      threadId: "thread-1",
+      questionText: "Which founders should be included?",
+      options: ["All founders"],
+    });
+    const answer = {
+      question_event_id: question.question_event_id,
+      question_turn_id: question.question_turn_id,
+      thread_id: question.thread_id,
+      answer: "All founders",
+      decision: "free_text" as const,
+      gate_kind: "clarification" as const,
+    };
+    workbooks.markQuestionSubmitting(workbookId, question.tool_call_id, answer);
+
+    await monitor.sweep();
+
+    expect(client.listTurns).toHaveBeenCalledWith(sessionId);
+    expect(workbooks.getPendingQuestion(workbookId)).toBeNull();
   });
 });
