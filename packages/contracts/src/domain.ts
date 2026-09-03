@@ -368,6 +368,7 @@ export const GateKindSchema = z.enum([
   'production_review',
   'skill_promotion_review',
 ]);
+export type GateKind = z.infer<typeof GateKindSchema>;
 
 export const QuestionDecisionSchema = z.enum(['approve', 'revise', 'skip', 'cancel', 'free_text']);
 

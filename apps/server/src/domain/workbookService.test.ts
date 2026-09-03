@@ -144,6 +144,46 @@ describe("workbook persistence", () => {
     }
   });
 
+  it("does not move the current turn back to an older completed turn", () => {
+    const database = openDatabase(":memory:");
+    const service = new WorkbookService(database);
+    const workbook = service.createWorkbook({ title: "Turn ordering" });
+    service.connectTrueForgeSession(workbook.id, "session-1");
+    const createdAt = new Date().toISOString();
+
+    service.saveTrueForgeTurn(workbook.id, {
+      id: "turn-1",
+      sessionId: "session-1",
+      previousTurnId: null,
+      status: "done",
+      requiredActions: [],
+      createdAt,
+      finishedAt: createdAt,
+    });
+    service.saveTrueForgeTurn(workbook.id, {
+      id: "turn-2",
+      sessionId: "session-1",
+      previousTurnId: "turn-1",
+      status: "running",
+      requiredActions: [],
+      createdAt,
+      finishedAt: null,
+    });
+    service.saveTrueForgeTurn(workbook.id, {
+      id: "turn-1",
+      sessionId: "session-1",
+      previousTurnId: null,
+      status: "done",
+      requiredActions: [],
+      createdAt,
+      finishedAt: createdAt,
+    });
+
+    expect(service.getWorkbook(workbook.id).current_trueforge_turn_id).toBe(
+      "turn-2",
+    );
+  });
+
   it("stores each streamed TrueForge event sequence once", () => {
     const database = openDatabase(":memory:");
     const service = new WorkbookService(database);

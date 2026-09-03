@@ -2,6 +2,7 @@ import {
   IdSchema,
   type TrueForgeStreamEvent,
   TrueForgeStreamEventSchema,
+  TrueForgeTurnListResponseSchema,
   type TrueForgeTurnInput,
   TrueForgeTurnInputSchema,
 } from "@kalki/contracts";
@@ -25,8 +26,46 @@ const coordinatorInstructions = [
 
 const healthTimeoutMs = 3_000;
 const requestTimeoutMs = 30_000;
-const subscriptionWindowMs = 60_000;
+const subscriptionIdleMs = 120_000;
 const subscriptionFailureLimit = 3;
+
+/**
+ * Aborts a stream that stops producing bytes. A turn can legitimately run for
+ * ten minutes, so the deadline has to measure silence rather than total time.
+ */
+class IdleDeadline {
+  private readonly controller = new AbortController();
+  private timer: NodeJS.Timeout;
+
+  constructor(
+    private readonly windowMs: number,
+    private readonly reason: string,
+  ) {
+    this.timer = this.arm();
+  }
+
+  get signal() {
+    return this.controller.signal;
+  }
+
+  extend() {
+    clearTimeout(this.timer);
+    this.timer = this.arm();
+  }
+
+  clear() {
+    clearTimeout(this.timer);
+  }
+
+  private arm() {
+    const timer = setTimeout(
+      () => this.controller.abort(new Error(this.reason)),
+      this.windowMs,
+    );
+    timer.unref();
+    return timer;
+  }
+}
 
 interface TrueForgeClientOptions {
   baseUrl: string;
@@ -42,6 +81,11 @@ export interface PendingTrueForgeQuestion {
   toolCallId: string;
   question: string;
   options: string[];
+}
+
+export interface TrueForgeTurnPage {
+  turns: TrueForgeTurnInput[];
+  nextPageToken: string | null;
 }
 
 export class TrueForgeClient {
@@ -153,13 +197,17 @@ export class TrueForgeClient {
     let failures = 0;
 
     while (true) {
-      let receivedEvent = false;
+      let ended: unknown = null;
+      const idle = new IdleDeadline(
+        subscriptionIdleMs,
+        `TrueForge turn ${turnId} stream produced nothing for ${subscriptionIdleMs}ms`,
+      );
       try {
         const response = await fetch(
           `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/subscribe?after_sequence_number=${cursor}`,
           {
             headers: { accept: "text/event-stream" },
-            signal: AbortSignal.timeout(subscriptionWindowMs),
+            signal: idle.signal,
           },
         );
         if (response.status === 412) return;
@@ -189,13 +237,13 @@ export class TrueForgeClient {
           );
           await onEvent(event, sequenceNumber);
           cursor = sequenceNumber;
-          receivedEvent = true;
           turnDone = event.type === "turn.done";
         };
 
         try {
           while (!turnDone) {
             const chunk = await reader.read();
+            idle.extend();
             if (chunk.done) break;
             buffer += decoder.decode(chunk.value, { stream: true });
 
@@ -215,19 +263,27 @@ export class TrueForgeClient {
               newline = buffer.indexOf("\n");
             }
           }
+        } catch (error) {
+          try {
+            await reader.cancel(error);
+          } catch {
+            // The body may already be errored or closed; keep the original failure.
+          }
+          throw error;
         } finally {
           reader.releaseLock();
         }
 
         if (turnDone) return;
-        failures = receivedEvent ? 0 : failures + 1;
-        if (failures >= subscriptionFailureLimit) {
-          throw new Error("TrueForge turn subscription ended before turn.done");
-        }
+        ended = new Error("TrueForge turn subscription ended before turn.done");
       } catch (error) {
-        failures = receivedEvent ? 0 : failures + 1;
-        if (failures >= subscriptionFailureLimit) throw error;
+        ended = error;
+      } finally {
+        idle.clear();
       }
+
+      failures += 1;
+      if (failures >= subscriptionFailureLimit) throw ended;
 
       await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** failures));
     }
@@ -393,6 +449,25 @@ export class TrueForgeClient {
       { signal: AbortSignal.timeout(requestTimeoutMs) },
     );
     return this.parseTurn(await this.readJson(response, "turn read"));
+  }
+
+  async listTurns(
+    sessionId: string,
+    pageToken?: string,
+  ): Promise<TrueForgeTurnPage> {
+    const params = new URLSearchParams({ limit: "25" });
+    if (pageToken) params.set("page_token", pageToken);
+    const response = await fetch(
+      `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns?${params.toString()}`,
+      { signal: AbortSignal.timeout(requestTimeoutMs) },
+    );
+    const payload = TrueForgeTurnListResponseSchema.parse(
+      await this.readJson(response, "turn list"),
+    );
+    return {
+      turns: payload.data.map((turn) => this.parseTurn({ data: turn })),
+      nextPageToken: payload.pagination.next_page_token ?? null,
+    };
   }
 
   async deleteSession(sessionId: string): Promise<void> {

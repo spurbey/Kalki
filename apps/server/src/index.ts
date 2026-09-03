@@ -9,10 +9,7 @@ import {
   IdSchema,
   TableRowsQuerySchema,
   TableRowsResponseSchema,
-  type JsonObject,
-  type JsonValue,
   TaskResponseSchema,
-  type TrueForgeStreamEvent,
   TrueForgeTurnResponseSchema,
   WorkbookResponseSchema,
   WorkbookHeartbeatSchema,
@@ -27,10 +24,8 @@ import { DomainError } from "./domain/errors.js";
 import { WorkbookService } from "./domain/workbookService.js";
 import { EventStore } from "./events/eventStore.js";
 import { startWorkbookMcp } from "./mcp/workbookServer.js";
-import {
-  TrueForgeClient,
-  type PendingTrueForgeQuestion,
-} from "./trueforge/sessionClient.js";
+import { TrueForgeClient } from "./trueforge/sessionClient.js";
+import { TurnMonitor } from "./trueforge/turnMonitor.js";
 import type { TrueForgeTurnInput } from "@kalki/contracts";
 
 const database = openDatabase(config.databasePath);
@@ -45,8 +40,9 @@ const trueForge = new TrueForgeClient({
 const app = new Hono();
 const connectingWorkbooks = new Set<string>();
 const turningWorkbooks = new Set<string>();
-const streamingTurns = new Set<string>();
+const turns = new TurnMonitor(workbooks, events, trueForge);
 
+turns.start();
 startWorkbookMcp(workbooks);
 app.route("/", browserRoutes);
 
@@ -58,183 +54,6 @@ function trueForgeUnavailable(error: unknown) {
     503,
     true,
   );
-}
-
-function gateKindForTaskState(
-  state: string,
-): PendingQuestionRegistration["gateKind"] {
-  if (state === "awaiting_task_confirmation") return "task_review";
-  if (state === "awaiting_schema_review") return "schema_review";
-  if (state === "awaiting_production_confirmation") return "production_review";
-  return "clarification";
-}
-
-type PendingQuestionRegistration = {
-  taskId: string | null;
-  runId: string | null;
-  gateKind:
-    | "clarification"
-    | "task_review"
-    | "schema_review"
-    | "production_review"
-    | "skill_promotion_review";
-  questionTurnId: string;
-  questionEventId: string;
-  toolCallId: string;
-  threadId: string;
-  questionText: string;
-  options: string[];
-};
-
-async function persistPendingQuestion(
-  workbookId: string,
-  turn: TrueForgeTurnInput,
-) {
-  const question: PendingTrueForgeQuestion | null =
-    await trueForge.getPendingQuestion(
-      workbooks.getWorkbook(workbookId).trueforge_session_id!,
-      turn,
-    );
-  if (!question) return null;
-
-  const snapshot = workbooks.getSnapshot(workbookId);
-  if (snapshot.tasks.length > 1) {
-    throw new DomainError(
-      "Cannot match the question to one task",
-      "ambiguous_question_task",
-      409,
-    );
-  }
-  const task = snapshot.tasks[0] ?? null;
-  const run =
-    snapshot.runs.find(
-      (candidate) => candidate.status === "awaiting_confirmation",
-    ) ?? null;
-  const gateKind = gateKindForTaskState(task?.state ?? "aligning");
-  const options =
-    gateKind === "task_review"
-      ? ["Approve task", "Request changes", "Cancel task"]
-      : gateKind === "schema_review"
-        ? ["Approve schemas", "Request changes", "Cancel task"]
-        : gateKind === "production_review"
-          ? ["Approve full production run", "Request changes", "Cancel run"]
-          : question.options;
-
-  return workbooks.savePendingQuestion(workbookId, {
-    taskId: task?.id ?? null,
-    runId: run?.id ?? null,
-    gateKind,
-    questionTurnId: question.questionTurnId,
-    questionEventId: question.questionEventId,
-    toolCallId: question.toolCallId,
-    threadId: question.threadId,
-    questionText: question.question,
-    options,
-  });
-}
-
-function compactAgentEvent(event: TrueForgeStreamEvent): JsonObject {
-  const compact = (value: JsonValue): JsonValue => {
-    if (typeof value === "string") return value.slice(0, 4000);
-    if (Array.isArray(value)) return value.slice(0, 50).map(compact);
-    if (value && typeof value === "object") {
-      const result: JsonObject = {};
-      for (const [key, child] of Object.entries(value).slice(0, 50)) {
-        const normalized = key.toLowerCase();
-        if (
-          normalized === "usage" ||
-          normalized === "metrics" ||
-          normalized.includes("signature") ||
-          normalized.includes("encrypted")
-        ) {
-          continue;
-        }
-        result[key] = compact(child);
-      }
-      return result;
-    }
-    return value;
-  };
-
-  const payload = compact(event) as JsonObject;
-  if (Buffer.byteLength(JSON.stringify(payload), "utf8") <= 16_384)
-    return payload;
-
-  const fallback: JsonObject = {
-    type: event.type.slice(0, 94),
-    payload_truncated: true,
-  };
-  for (const key of ["id", "thread_id", "created_at", "content"]) {
-    if (typeof event[key] === "string")
-      fallback[key] = event[key].slice(0, 4000);
-  }
-  if (Buffer.byteLength(JSON.stringify(fallback), "utf8") <= 16_384)
-    return fallback;
-  return { type: event.type.slice(0, 94), payload_truncated: true };
-}
-
-function startTurnStream(
-  workbookId: string,
-  sessionId: string,
-  turnId: string,
-) {
-  if (streamingTurns.has(turnId)) return;
-  streamingTurns.add(turnId);
-
-  void (async () => {
-    try {
-      const stored = workbooks.getCurrentTrueForgeTurn(workbookId);
-      const after = stored?.id === turnId ? stored.last_sequence_number : 0;
-      await trueForge.subscribeToTurn(
-        sessionId,
-        turnId,
-        after,
-        async (event, sequenceNumber) => {
-          events.appendTurnEvent(
-            workbookId,
-            turnId,
-            sequenceNumber,
-            `agent.${event.type}`,
-            {
-              turn_id: turnId,
-              upstream_sequence: sequenceNumber,
-              event: compactAgentEvent(event),
-            },
-          );
-        },
-      );
-
-      const completed = await trueForge.getTurn(sessionId, turnId);
-      workbooks.saveTrueForgeTurn(workbookId, completed);
-      await persistPendingQuestion(workbookId, completed);
-    } catch (error) {
-      console.error(`TrueForge event stream failed for turn ${turnId}`, error);
-    } finally {
-      streamingTurns.delete(turnId);
-    }
-  })();
-}
-
-async function refreshCurrentTurn(workbookId: string) {
-  const workbook = workbooks.getWorkbook(workbookId);
-  if (!workbook.trueforge_session_id) return;
-  const current = workbooks.getCurrentTrueForgeTurn(workbookId);
-  if (
-    !current ||
-    (current.status !== "running" && current.required_actions.length === 0)
-  )
-    return;
-
-  if (current.status === "running") {
-    startTurnStream(workbookId, workbook.trueforge_session_id, current.id);
-  }
-
-  const upstream = await trueForge.getTurn(
-    workbook.trueforge_session_id,
-    current.id,
-  );
-  workbooks.saveTrueForgeTurn(workbookId, upstream);
-  await persistPendingQuestion(workbookId, upstream);
 }
 
 app.onError((error, c) => {
@@ -332,7 +151,7 @@ app.get("/api/v1/workbooks/:workbookId", async (c) => {
     );
   }
   try {
-    await refreshCurrentTurn(workbookId.data);
+    await turns.refreshCurrent(workbookId.data);
   } catch (error) {
     console.error(error);
   }
@@ -362,7 +181,7 @@ app.get("/api/v1/workbooks/:workbookId/events", (c) => {
   const workbook = workbooks.getWorkbook(workbookId.data);
   const currentTurn = workbooks.getCurrentTrueForgeTurn(workbook.id);
   if (workbook.trueforge_session_id && currentTurn?.status === "running") {
-    startTurnStream(workbook.id, workbook.trueforge_session_id, currentTurn.id);
+    turns.watch(workbook.id, workbook.trueforge_session_id, currentTurn.id);
   }
 
   const cursorValue =
@@ -622,7 +441,7 @@ app.post("/api/v1/workbooks/:workbookId/turns", async (c) => {
           current.id,
         );
         current = workbooks.saveTrueForgeTurn(workbook.id, refreshed);
-        await persistPendingQuestion(workbook.id, refreshed);
+        await turns.recordPendingQuestion(workbook.id, refreshed);
       } catch (error) {
         throw trueForgeUnavailable(error);
       }
@@ -648,8 +467,8 @@ app.post("/api/v1/workbooks/:workbookId/turns", async (c) => {
 
     try {
       const savedTurn = workbooks.saveTrueForgeTurn(workbook.id, turn);
-      startTurnStream(workbook.id, workbook.trueforge_session_id, savedTurn.id);
-      await persistPendingQuestion(workbook.id, turn);
+      turns.watch(workbook.id, workbook.trueforge_session_id, savedTurn.id);
+      await turns.recordPendingQuestion(workbook.id, turn);
       return c.json(
         TrueForgeTurnResponseSchema.parse({
           data: savedTurn,
@@ -713,7 +532,7 @@ app.post(
       );
     }
     try {
-      await refreshCurrentTurn(workbook.id);
+      await turns.refreshCurrent(workbook.id);
     } catch (error) {
       throw trueForgeUnavailable(error);
     }
@@ -751,7 +570,7 @@ app.post(
         input.data,
         answerTurn.id,
       );
-      startTurnStream(workbook.id, workbook.trueforge_session_id, savedTurn.id);
+      turns.watch(workbook.id, workbook.trueforge_session_id, savedTurn.id);
     } catch (error) {
       workbooks.resetQuestionSubmission(workbook.id, toolCallId.data);
       throw error;
