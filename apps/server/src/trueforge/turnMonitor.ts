@@ -38,6 +38,7 @@ function gateKindForTaskState(state: string): GateKind {
 export class TurnMonitor {
   private readonly streaming = new Map<string, Promise<void>>();
   private readonly reconciling = new Map<string, Promise<void>>();
+  private recoveringSubmissions = false;
   private sweepTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -172,39 +173,45 @@ export class TurnMonitor {
   }
 
   private async recoverSubmittingQuestions() {
-    for (const item of this.workbooks.listSubmittingQuestions()) {
-      try {
-        const turns = await this.trueForge.listTurns(item.sessionId);
-        const answerTurn = turns.find(
-          (turn) => turn.previousTurnId === item.question.question_turn_id,
-        );
-        if (answerTurn && item.question.answer_text && item.question.decision) {
-          this.workbooks.saveTrueForgeTurn(item.workbookId, answerTurn);
-          this.workbooks.completeQuestion(
-            item.workbookId,
-            item.question.tool_call_id,
-            {
-              question_event_id: item.question.question_event_id,
-              question_turn_id: item.question.question_turn_id,
-              thread_id: item.question.thread_id,
-              answer: item.question.answer_text,
-              decision: item.question.decision,
-              gate_kind: item.question.gate_kind,
-              ...(item.question.run_id
-                ? { related_run_id: item.question.run_id }
-                : {}),
-            },
-            answerTurn.id,
+    if (this.recoveringSubmissions) return;
+    this.recoveringSubmissions = true;
+    try {
+      for (const item of this.workbooks.listSubmittingQuestions()) {
+        try {
+          const turns = await this.trueForge.listTurns(item.sessionId);
+          const answerTurn = turns.find(
+            (turn) => turn.previousTurnId === item.question.question_turn_id,
           );
-        } else if (!answerTurn) {
-          this.workbooks.resetQuestionSubmission(
-            item.workbookId,
-            item.question.tool_call_id,
-          );
+          if (answerTurn && item.question.answer_text && item.question.decision) {
+            this.workbooks.saveTrueForgeTurn(item.workbookId, answerTurn);
+            this.workbooks.completeQuestion(
+              item.workbookId,
+              item.question.tool_call_id,
+              {
+                question_event_id: item.question.question_event_id,
+                question_turn_id: item.question.question_turn_id,
+                thread_id: item.question.thread_id,
+                answer: item.question.answer_text,
+                decision: item.question.decision,
+                gate_kind: item.question.gate_kind,
+                ...(item.question.run_id
+                  ? { related_run_id: item.question.run_id }
+                  : {}),
+              },
+              answerTurn.id,
+            );
+          } else if (!answerTurn) {
+            this.workbooks.resetQuestionSubmission(
+              item.workbookId,
+              item.question.tool_call_id,
+            );
+          }
+        } catch (error) {
+          console.error(`Could not recover question ${item.question.id}`, error);
         }
-      } catch (error) {
-        console.error(`Could not recover question ${item.question.id}`, error);
       }
+    } finally {
+      this.recoveringSubmissions = false;
     }
   }
 

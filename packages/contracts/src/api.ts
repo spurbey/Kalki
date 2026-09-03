@@ -20,6 +20,7 @@ import {
   TableRowSchema,
   TimestampSchema,
   TrueForgeTurnSchema,
+  TrueForgeTurnStatusSchema,
   WorkbookSchema,
   WorkbookSnapshotSchema,
   WorkspaceRelativePathSchema,
@@ -297,8 +298,23 @@ export type PlaywrightToolResult = z.infer<typeof PlaywrightToolResultSchema>;
 export const WorkbookResponseSchema = z.object({ data: WorkbookSchema }).strict();
 export const TaskResponseSchema = z.object({ data: TaskSchema }).strict();
 export const TrueForgeTurnResponseSchema = z.object({ data: TrueForgeTurnSchema }).strict();
+export const TrueForgeTurnListItemSchema = z
+  .object({
+    id: IdSchema,
+    session_id: IdSchema,
+    previous_turn_id: IdSchema.nullable(),
+    state: z
+      .object({
+        status: TrueForgeTurnStatusSchema,
+        required_actions: z.array(JsonValueSchema).optional(),
+        completed_at: TimestampSchema.nullable().optional(),
+      })
+      .passthrough(),
+    created_at: TimestampSchema,
+  })
+  .passthrough();
 export const TrueForgeTurnListResponseSchema = z
-  .object({ data: z.array(JsonValueSchema) })
+  .object({ data: z.array(TrueForgeTurnListItemSchema) })
   .passthrough();
 export const WorkbookSnapshotResponseSchema = z.object({ data: WorkbookSnapshotSchema }).strict();
 export const TableRowsQuerySchema = z
