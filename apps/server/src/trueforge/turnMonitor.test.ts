@@ -238,4 +238,41 @@ describe("turn monitoring", () => {
     expect(client.listTurns).toHaveBeenNthCalledWith(2, sessionId, "older-page");
     expect(workbooks.getPendingQuestion(workbookId)).toBeNull();
   });
+
+  it("stops recovery when TrueForge repeats a page token", async () => {
+    const client = {
+      listTurns: vi.fn(async (_sessionId: string, pageToken?: string) => ({
+        turns: [],
+        nextPageToken: pageToken ?? "same-page",
+      })),
+      getTurn: vi.fn(),
+      getPendingQuestion: vi.fn(),
+    };
+    const { workbookId, workbooks, monitor } = harness(client);
+    workbooks.saveTrueForgeTurn(workbookId, upstreamTurn({ status: "done" }));
+    const question = workbooks.savePendingQuestion(workbookId, {
+      taskId: null,
+      runId: null,
+      gateKind: "clarification",
+      questionTurnId: turnId,
+      questionEventId: "event-repeated-page",
+      toolCallId: "call-repeated-page",
+      threadId: "thread-1",
+      questionText: "Which founders should be included?",
+      options: ["All founders"],
+    });
+    workbooks.markQuestionSubmitting(workbookId, question.tool_call_id, {
+      question_event_id: question.question_event_id,
+      question_turn_id: question.question_turn_id,
+      thread_id: question.thread_id,
+      answer: "All founders",
+      decision: "free_text",
+      gate_kind: question.gate_kind,
+    });
+
+    await monitor.sweep();
+
+    expect(client.listTurns).toHaveBeenCalledTimes(2);
+    expect(workbooks.getPendingQuestion(workbookId)?.status).toBe("pending");
+  });
 });

@@ -179,8 +179,13 @@ export class TurnMonitor {
       for (const item of this.workbooks.listSubmittingQuestions()) {
         try {
           let pageToken: string | undefined;
+          const seenPageTokens = new Set<string>();
           let answerTurn: TrueForgeTurnInput | undefined;
           do {
+            if (pageToken) {
+              if (seenPageTokens.has(pageToken)) break;
+              seenPageTokens.add(pageToken);
+            }
             const page = await this.trueForge.listTurns(
               item.sessionId,
               pageToken,
