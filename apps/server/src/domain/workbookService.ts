@@ -426,11 +426,20 @@ export class WorkbookService {
           turn.finishedAt,
           timestamp,
         );
-      this.database
-        .prepare(
-          "UPDATE workbooks SET current_trueforge_turn_id = ?, updated_at = ? WHERE id = ?",
-        )
-        .run(turn.id, timestamp, workbookId);
+      const current = this.database
+        .prepare("SELECT current_trueforge_turn_id FROM workbooks WHERE id = ?")
+        .get(workbookId) as { current_trueforge_turn_id: string | null };
+      if (
+        !current.current_trueforge_turn_id ||
+        current.current_trueforge_turn_id === turn.id ||
+        current.current_trueforge_turn_id === turn.previousTurnId
+      ) {
+        this.database
+          .prepare(
+            "UPDATE workbooks SET current_trueforge_turn_id = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(turn.id, timestamp, workbookId);
+      }
     })();
 
     const row = this.database
@@ -555,6 +564,31 @@ export class WorkbookService {
     return row ? this.parseAgentQuestion(row) : null;
   }
 
+  listSubmittingQuestions(): {
+    workbookId: string;
+    sessionId: string;
+    question: AgentQuestion;
+  }[] {
+    const rows = this.database
+      .prepare(
+        `SELECT agent_questions.*, workbooks.trueforge_session_id AS session_id
+         FROM agent_questions
+         JOIN workbooks ON workbooks.id = agent_questions.workbook_id
+         WHERE agent_questions.status = 'submitting'
+           AND workbooks.trueforge_session_id IS NOT NULL
+         ORDER BY agent_questions.created_at ASC`,
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map((row) => {
+      const { session_id: sessionId, ...questionRow } = row;
+      return {
+        workbookId: String(row.workbook_id),
+        sessionId: String(sessionId),
+        question: this.parseAgentQuestion(questionRow),
+      };
+    });
+  }
+
   markQuestionSubmitting(
     workbookId: string,
     toolCallId: string,
@@ -604,9 +638,15 @@ export class WorkbookService {
     this.database.transaction(() => {
       this.database
         .prepare(
-          "UPDATE agent_questions SET status = ? WHERE id = ? AND status = ?",
+          "UPDATE agent_questions SET status = ?, answer_text = ?, decision = ? WHERE id = ? AND status = ?",
         )
-        .run("submitting", question.id, "pending");
+        .run(
+          "submitting",
+          input.answer,
+          input.decision,
+          question.id,
+          "pending",
+        );
       if (!approval) return;
       this.database
         .prepare(
@@ -693,8 +733,8 @@ export class WorkbookService {
 
   /**
    * Retires a question whose turn died before an answer could reach TrueForge.
-   * Questions already being submitted are left to the answer endpoint, which
-   * owns its own rollback.
+   * Questions left in submitting state are marked submission_unknown so the
+   * UI knows their exact outcome was lost when the turn stream died.
    */
   invalidateQuestionsForTurn(
     workbookId: string,
@@ -703,7 +743,7 @@ export class WorkbookService {
     const rows = this.database
       .prepare(
         `SELECT * FROM agent_questions
-         WHERE workbook_id = ? AND question_turn_id = ? AND status = 'pending'
+         WHERE workbook_id = ? AND question_turn_id = ? AND status IN ('pending', 'submitting')
          ORDER BY created_at ASC`,
       )
       .all(workbookId, turnId);
@@ -712,12 +752,20 @@ export class WorkbookService {
 
     const retired: AgentQuestion[] = [];
     this.database.transaction(() => {
-      const update = this.database.prepare(
+      const updatePending = this.database.prepare(
         "UPDATE agent_questions SET status = 'invalidated' WHERE id = ? AND status = 'pending'",
       );
+      const updateSubmitting = this.database.prepare(
+        "UPDATE agent_questions SET status = 'submission_unknown' WHERE id = ? AND status = 'submitting'",
+      );
       for (const question of questions) {
-        if (update.run(question.id).changes === 0) continue;
-        retired.push({ ...question, status: "invalidated" });
+        if (question.status === "pending") {
+          if (updatePending.run(question.id).changes === 0) continue;
+          retired.push({ ...question, status: "invalidated" });
+        } else if (question.status === "submitting") {
+          if (updateSubmitting.run(question.id).changes === 0) continue;
+          retired.push({ ...question, status: "submission_unknown" });
+        }
       }
     })();
 

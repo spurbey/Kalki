@@ -57,7 +57,11 @@ export class TurnMonitor {
     if (this.sweepTimer) return;
     this.sweepTimer = setInterval(() => void this.sweep(), this.intervalMs);
     this.sweepTimer.unref();
-    void this.sweep();
+    void this.recoverSubmittingQuestions()
+      .catch((error) =>
+        console.error("Could not recover question submissions", error),
+      )
+      .finally(() => void this.sweep());
   }
 
   stop() {
@@ -167,6 +171,43 @@ export class TurnMonitor {
       questionText: question.question,
       options: gateOptions[gateKind] ?? question.options,
     });
+  }
+
+  private async recoverSubmittingQuestions() {
+    for (const item of this.workbooks.listSubmittingQuestions()) {
+      try {
+        const turns = await this.trueForge.listTurns(item.sessionId);
+        const answerTurn = turns.find(
+          (turn) => turn.previousTurnId === item.question.question_turn_id,
+        );
+        if (answerTurn && item.question.answer_text && item.question.decision) {
+          this.workbooks.saveTrueForgeTurn(item.workbookId, answerTurn);
+          this.workbooks.completeQuestion(
+            item.workbookId,
+            item.question.tool_call_id,
+            {
+              question_event_id: item.question.question_event_id,
+              question_turn_id: item.question.question_turn_id,
+              thread_id: item.question.thread_id,
+              answer: item.question.answer_text,
+              decision: item.question.decision,
+              gate_kind: item.question.gate_kind,
+              ...(item.question.run_id
+                ? { related_run_id: item.question.run_id }
+                : {}),
+            },
+            answerTurn.id,
+          );
+        } else if (!answerTurn) {
+          this.workbooks.resetQuestionSubmission(
+            item.workbookId,
+            item.question.tool_call_id,
+          );
+        }
+      } catch (error) {
+        console.error(`Could not recover question ${item.question.id}`, error);
+      }
+    }
   }
 
   private async reconcile(

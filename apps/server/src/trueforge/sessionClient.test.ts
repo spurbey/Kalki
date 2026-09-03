@@ -28,6 +28,10 @@ class FakeStream {
       encoder.encode(`id: ${sequence}\ndata: ${JSON.stringify({ type })}\n\n`),
     );
   }
+
+  finish() {
+    this.controller.close();
+  }
 }
 
 function fakeTransport() {
@@ -112,7 +116,7 @@ describe("turn subscription", () => {
     first.push(1, "model.message");
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(120_000);
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1_000);
 
     const second = await transport.next();
     second.push(2, "turn.done");
@@ -146,5 +150,65 @@ describe("turn subscription", () => {
 
     expect((await failure)?.message).toMatch(/produced nothing/);
     expect(transport.requests).toHaveLength(3);
+  });
+
+  it("bounds reconnects when partial streams keep delivering events", async () => {
+    vi.useFakeTimers();
+    const transport = fakeTransport();
+    const subscription = client().subscribeToTurn(
+      sessionId,
+      turnId,
+      0,
+      async () => {},
+    );
+    const failure = subscription.then(
+      () => null,
+      (error: Error) => error,
+    );
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const stream = await transport.next();
+      stream.push(attempt, "model.message");
+      stream.finish();
+      await vi.advanceTimersByTimeAsync(0);
+      if (attempt < 3) {
+        await vi.advanceTimersByTimeAsync(500 * 2 ** attempt);
+      }
+    }
+
+    expect((await failure)?.message).toMatch(/ended before turn.done/);
+    expect(transport.requests).toHaveLength(3);
+  });
+});
+
+describe("turn listing", () => {
+  it("uses TrueForge's supported page size", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: turnId,
+              session_id: sessionId,
+              previous_turn_id: null,
+              state: {
+                status: "done",
+                required_actions: [],
+                completed_at: "2026-09-03T02:36:00.000Z",
+              },
+              created_at: "2026-09-03T02:26:00.000Z",
+            },
+          ],
+          pagination: { limit: 25 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(client().listTurns(sessionId)).resolves.toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://trueforge.test/api/v1/sessions/${sessionId}/turns?limit=25`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 });

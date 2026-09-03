@@ -191,7 +191,6 @@ export class TrueForgeClient {
     let failures = 0;
 
     while (true) {
-      let receivedEvent = false;
       let ended: unknown = null;
       const idle = new IdleDeadline(
         subscriptionIdleMs,
@@ -232,7 +231,6 @@ export class TrueForgeClient {
           );
           await onEvent(event, sequenceNumber);
           cursor = sequenceNumber;
-          receivedEvent = true;
           turnDone = event.type === "turn.done";
         };
 
@@ -271,7 +269,7 @@ export class TrueForgeClient {
         idle.clear();
       }
 
-      failures = receivedEvent ? 0 : failures + 1;
+      failures += 1;
       if (failures >= subscriptionFailureLimit) throw ended;
 
       await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** failures));
@@ -438,6 +436,22 @@ export class TrueForgeClient {
       { signal: AbortSignal.timeout(requestTimeoutMs) },
     );
     return this.parseTurn(await this.readJson(response, "turn read"));
+  }
+
+  async listTurns(sessionId: string): Promise<TrueForgeTurnInput[]> {
+    const response = await fetch(
+      `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns?limit=25`,
+      { signal: AbortSignal.timeout(requestTimeoutMs) },
+    );
+    const payload = await this.readJson(response, "turn list");
+    if (!payload || typeof payload !== "object" || !("data" in payload)) {
+      throw new Error("TrueForge turn list did not include data");
+    }
+    const data = (payload as { data?: unknown }).data;
+    if (!Array.isArray(data)) {
+      throw new Error("TrueForge turn list data was invalid");
+    }
+    return data.map((turn) => this.parseTurn({ data: turn }));
   }
 
   async deleteSession(sessionId: string): Promise<void> {
