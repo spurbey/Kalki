@@ -199,7 +199,6 @@ export function evaluateWorkbook(
   const turnIds = new Set(
     events.flatMap((event) => {
       if (event.type !== "agent.turn.created") return [];
-      const source = objectValue(event.payload.event);
       const turnId = turnIdFor(event);
       return turnId ? [turnId] : [];
     }),
