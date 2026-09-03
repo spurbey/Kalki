@@ -191,14 +191,21 @@ describe("turn monitoring", () => {
   it("recovers a submitted answer during a periodic sweep", async () => {
     const answerTurnId = "turn_founders_answer";
     const client = {
-      listTurns: vi.fn(async () => [
-        upstreamTurn({
-          id: answerTurnId,
-          previousTurnId: turnId,
-          status: "done",
-          finishedAt: "2026-09-01T02:40:00.000Z",
-        }),
-      ]),
+      listTurns: vi.fn(async (_sessionId: string, pageToken?: string) =>
+        pageToken
+          ? {
+              turns: [
+                upstreamTurn({
+                  id: answerTurnId,
+                  previousTurnId: turnId,
+                  status: "done",
+                  finishedAt: "2026-09-01T02:40:00.000Z",
+                }),
+              ],
+              nextPageToken: null,
+            }
+          : { turns: [], nextPageToken: "older-page" },
+      ),
       getTurn: vi.fn(),
       getPendingQuestion: vi.fn(),
     };
@@ -227,7 +234,8 @@ describe("turn monitoring", () => {
 
     await monitor.sweep();
 
-    expect(client.listTurns).toHaveBeenCalledWith(sessionId);
+    expect(client.listTurns).toHaveBeenNthCalledWith(1, sessionId, undefined);
+    expect(client.listTurns).toHaveBeenNthCalledWith(2, sessionId, "older-page");
     expect(workbooks.getPendingQuestion(workbookId)).toBeNull();
   });
 });

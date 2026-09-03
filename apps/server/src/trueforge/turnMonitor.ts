@@ -178,10 +178,18 @@ export class TurnMonitor {
     try {
       for (const item of this.workbooks.listSubmittingQuestions()) {
         try {
-          const turns = await this.trueForge.listTurns(item.sessionId);
-          const answerTurn = turns.find(
-            (turn) => turn.previousTurnId === item.question.question_turn_id,
-          );
+          let pageToken: string | undefined;
+          let answerTurn: TrueForgeTurnInput | undefined;
+          do {
+            const page = await this.trueForge.listTurns(
+              item.sessionId,
+              pageToken,
+            );
+            answerTurn = page.turns.find(
+              (turn) => turn.previousTurnId === item.question.question_turn_id,
+            );
+            pageToken = answerTurn ? undefined : page.nextPageToken ?? undefined;
+          } while (!answerTurn && pageToken);
           if (answerTurn && item.question.answer_text && item.question.decision) {
             this.workbooks.saveTrueForgeTurn(item.workbookId, answerTurn);
             this.workbooks.completeQuestion(

@@ -233,13 +233,16 @@ describe("turn listing", () => {
               created_at: "2026-09-03T02:26:00.000Z",
             },
           ],
-          pagination: { limit: 25 },
+          pagination: { limit: 25, next_page_token: null },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
     );
 
-    await expect(client().listTurns(sessionId)).resolves.toHaveLength(1);
+    await expect(client().listTurns(sessionId)).resolves.toMatchObject({
+      turns: expect.arrayContaining([expect.objectContaining({ id: turnId })]),
+      nextPageToken: null,
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       `http://trueforge.test/api/v1/sessions/${sessionId}/turns?limit=25`,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),

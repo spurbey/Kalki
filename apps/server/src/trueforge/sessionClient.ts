@@ -83,6 +83,11 @@ export interface PendingTrueForgeQuestion {
   options: string[];
 }
 
+export interface TrueForgeTurnPage {
+  turns: TrueForgeTurnInput[];
+  nextPageToken: string | null;
+}
+
 export class TrueForgeClient {
   constructor(private readonly options: TrueForgeClientOptions) {}
 
@@ -446,15 +451,23 @@ export class TrueForgeClient {
     return this.parseTurn(await this.readJson(response, "turn read"));
   }
 
-  async listTurns(sessionId: string): Promise<TrueForgeTurnInput[]> {
+  async listTurns(
+    sessionId: string,
+    pageToken?: string,
+  ): Promise<TrueForgeTurnPage> {
+    const params = new URLSearchParams({ limit: "25" });
+    if (pageToken) params.set("page_token", pageToken);
     const response = await fetch(
-      `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns?limit=25`,
+      `${this.options.baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/turns?${params.toString()}`,
       { signal: AbortSignal.timeout(requestTimeoutMs) },
     );
     const payload = TrueForgeTurnListResponseSchema.parse(
       await this.readJson(response, "turn list"),
     );
-    return payload.data.map((turn) => this.parseTurn({ data: turn }));
+    return {
+      turns: payload.data.map((turn) => this.parseTurn({ data: turn })),
+      nextPageToken: payload.pagination.next_page_token ?? null,
+    };
   }
 
   async deleteSession(sessionId: string): Promise<void> {

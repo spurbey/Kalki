@@ -313,8 +313,18 @@ export const TrueForgeTurnListItemSchema = z
     created_at: TimestampSchema,
   })
   .passthrough();
+export const TrueForgeTurnListPaginationSchema = z
+  .object({
+    limit: z.number().int().positive().optional(),
+    next_page_token: z.string().min(1).nullable().optional(),
+    previous_page_token: z.string().min(1).nullable().optional(),
+  })
+  .passthrough();
 export const TrueForgeTurnListResponseSchema = z
-  .object({ data: z.array(TrueForgeTurnListItemSchema) })
+  .object({
+    data: z.array(TrueForgeTurnListItemSchema),
+    pagination: TrueForgeTurnListPaginationSchema,
+  })
   .passthrough();
 export const WorkbookSnapshotResponseSchema = z.object({ data: WorkbookSnapshotSchema }).strict();
 export const TableRowsQuerySchema = z
@@ -603,6 +613,10 @@ export type BrowserStatusResponse = z.infer<typeof BrowserStatusResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
 export type TrueForgeTurnResponse = z.infer<typeof TrueForgeTurnResponseSchema>;
+export type TrueForgeTurnListItem = z.infer<typeof TrueForgeTurnListItemSchema>;
+export type TrueForgeTurnListPagination = z.infer<
+  typeof TrueForgeTurnListPaginationSchema
+>;
 export type TrueForgeTurnListResponse = z.infer<typeof TrueForgeTurnListResponseSchema>;
 export type WorkbookSnapshotResponse = z.infer<typeof WorkbookSnapshotResponseSchema>;
 export type TableRowsQuery = z.infer<typeof TableRowsQuerySchema>;
