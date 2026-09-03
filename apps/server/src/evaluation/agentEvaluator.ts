@@ -38,6 +38,17 @@ function textValue(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function callName(call: ObjectValue): string {
+  const functionValue = objectValue(call.function);
+  const toolInfo = objectValue(call.tool_info) ?? objectValue(call.toolInfo);
+  return (
+    textValue(functionValue?.name) ??
+    textValue(toolInfo?.name) ??
+    textValue(call.name) ??
+    "unknown"
+  );
+}
+
 function turnIdFor(event: WorkbookEvent): string | null {
   const source = objectValue(event.payload.event);
   return textValue(event.payload.turn_id) ?? textValue(source?.turn_id);
@@ -60,23 +71,21 @@ function argumentsValue(call: ObjectValue): {
 }
 
 function actionFor(call: ObjectValue, args: unknown): string {
-  const functionValue = objectValue(call.function);
-  const name =
-    textValue(functionValue?.name) ?? textValue(call.name) ?? "unknown";
+  const name = callName(call);
   const input = objectValue(args);
+  let action = name;
   if (name === "call_tool" || name === "get_tool_info") {
     const server = textValue(input?.mcp_server);
     const tool = textValue(input?.tool_name);
-    return [name, server, tool].filter(Boolean).join(":");
-  }
-  if (name === "exec") {
+    action = [name, server, tool].filter(Boolean).join(":");
+  } else if (name === "exec") {
     const command = textValue(input?.command)?.trim();
     const executable = command
       ?.split(/\s+/)
       .find((token) => !/^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token));
-    return `${name}:${executable ?? "unknown"}`;
+    action = `${name}:${executable ?? "unknown"}`;
   }
-  return name;
+  return action.slice(0, 200);
 }
 
 function isReadAction(action: string): boolean {
@@ -107,9 +116,7 @@ function observationsFrom(event: WorkbookEvent): Observation[] {
     const call = objectValue(value);
     if (!call) return [];
     const args = argumentsValue(call);
-    const functionValue = objectValue(call.function);
-    const name =
-      textValue(functionValue?.name) ?? textValue(call.name) ?? "unknown";
+    const name = callName(call);
     const action = actionFor(call, args.value);
     const signature = createHash("sha256")
       .update(canonicalJson({ name, args: args.value ?? args.raw ?? null }))
@@ -129,6 +136,14 @@ function observationsFrom(event: WorkbookEvent): Observation[] {
 function failedToolResponse(event: WorkbookEvent): boolean {
   if (event.type !== "agent.tool.response") return false;
   const source = objectValue(event.payload.event);
+  if (
+    source?.isError === true ||
+    source?.is_error === true ||
+    event.payload.isError === true ||
+    event.payload.is_error === true
+  ) {
+    return true;
+  }
   const content = textValue(source?.content);
   if (!content) return false;
   try {
@@ -209,11 +224,12 @@ export function evaluateWorkbook(
   const terminalEvents = events.filter(
     (event) => event.type === "agent.turn.done",
   );
-  const terminalStatus =
-    textValue(
-      objectValue(objectValue(terminalEvents.at(-1)?.payload.event)?.state)
-        ?.status,
-    ) ?? null;
+  const latestTerminal = terminalEvents.at(-1);
+  const terminalStatus = latestTerminal
+    ? (textValue(
+        objectValue(objectValue(latestTerminal.payload.event)?.state)?.status,
+      ) ?? "done")
+    : null;
   const findings: WorkbookEvaluation["findings"] = repeats
     .slice(0, 5)
     .map((repeat) => ({
@@ -231,11 +247,11 @@ export function evaluateWorkbook(
       })),
     });
   }
-  const taskState = snapshot.tasks[0]?.state ?? null;
+  const task = snapshot.tasks.at(-1) ?? null;
+  const taskState = task?.state ?? null;
   const taskFinished = ["completed", "failed", "cancelled"].includes(
     taskState ?? "",
   );
-  const latestTerminal = terminalEvents.at(-1);
   if (
     latestTerminal &&
     !taskFinished &&
@@ -262,6 +278,7 @@ export function evaluateWorkbook(
 
   return WorkbookEvaluationSchema.parse({
     workbook_id: snapshot.workbook.id,
+    task_id: task?.id ?? null,
     event_count: events.length,
     turn_count: turnIds.size,
     tool_calls: {

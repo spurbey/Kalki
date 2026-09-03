@@ -78,4 +78,57 @@ describe("agent evaluator", () => {
     ]);
     expect(report.findings[1]?.evidence[0]?.seq).toBe(4);
   });
+
+  it("uses canonical tool names and the latest task state", () => {
+    const events = [
+      event(1, "agent.turn.created", {
+        turn_id: "turn_1",
+        event: { type: "turn.created", turn_id: "turn_1" },
+      }),
+      event(2, "agent.model.message.delta", {
+        turn_id: "turn_1",
+        event: {
+          type: "model.message.delta",
+          tool_calls: [
+            {
+              tool_info: { name: "browser_snapshot" },
+              input: {},
+            },
+            {
+              tool_info: { name: "x".repeat(500) },
+              input: {},
+            },
+          ],
+        },
+      }),
+      event(3, "agent.tool.response", {
+        turn_id: "turn_1",
+        event: { type: "tool.response", is_error: true, content: [] },
+      }),
+      event(4, "agent.turn.done", {
+        turn_id: "turn_1",
+        event: { type: "turn.done" },
+      }),
+    ];
+    const report = evaluateWorkbook(events, {
+      workbook: { id: "wb_eval" },
+      tasks: [
+        { id: "task_old", state: "completed" },
+        { id: "task_new", state: "exploring" },
+      ],
+      pending_question: null,
+    } as unknown as WorkbookSnapshot);
+
+    expect(report.task_id).toBe("task_new");
+    expect(report.workflow).toMatchObject({
+      task_state: "exploring",
+      terminal_status: "done",
+    });
+    expect(report.tool_calls.failed_responses).toBe(1);
+    expect(report.tool_calls.action_counts[0]).toMatchObject({
+      action: "browser_snapshot",
+      count: 1,
+    });
+    expect(report.tool_calls.action_counts[1]?.action).toHaveLength(200);
+  });
 });

@@ -357,6 +357,7 @@ const EvaluationFindingSchema = z
 export const WorkbookEvaluationSchema = z
   .object({
     workbook_id: IdSchema,
+    task_id: IdSchema.nullable(),
     event_count: z.number().int().nonnegative(),
     turn_count: z.number().int().nonnegative(),
     tool_calls: z
