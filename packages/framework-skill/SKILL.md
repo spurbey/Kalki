@@ -17,6 +17,9 @@ description: Build reviewed web-research workflows that keep raw data in files a
 - Reuse the current task id returned by `get_workbook_context`; do not register a duplicate task after recovery.
 - Inspect the workbook MCP tool list before calling a command. The current slice implements every workflow tool except `promote_skill`.
 - Use `kalki_runtime.schema_loader` and `pipeline_cli lint` for contract hashes. Never hand-roll schema or pipeline hashes.
+- Soft No-Progress Rule: If two attempts using the same strategy fail, checkpoint observed evidence and change strategy immediately. Do not repeatedly decode, parse, or regex-split the same raw payload with scratch scripts.
+- Stage Discipline: Keep each turn focused on exactly one workflow stage: exploration, schema, build, or test. Complete the active stage or checkpoint evidence before initiating subsequent steps.
+- Normalized Browser Acquisition: Use `kalki_runtime.browser.BrowserAcquisitionClient` (or `context.browser`) for browser-backed data access. Never manually parse MCP `TextContent` objects or write ad-hoc CLI decoding loops in bash.
 
 ## State-Aware Runbook
 

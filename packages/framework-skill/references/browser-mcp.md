@@ -13,8 +13,17 @@ Use Playwright for bounded reconnaissance and browser-backed source access.
 For execution, keep the approval boundary explicit:
 
 1. The root coordinator directly navigates to the reviewed page or deterministic JSON endpoint immediately before the pipeline run.
-2. The generated operator calls the safe `browser_network_requests` and `browser_network_request` tools through `mcp_client` to read the captured response body.
-3. The operator parses and reduces that body inside the sandbox. It never prints the full response into model context.
+2. The generated operator reads captured responses through `kalki_runtime.browser.BrowserAcquisitionClient` (or `context.browser`):
+   ```python
+   from kalki_runtime.browser import BrowserAcquisitionClient
+
+   client = BrowserAcquisitionClient()
+   # Fetch parsed JSON directly from captured request index (unwraps TextContent and headers):
+   data = client.fetch_json(260)
+   # Or read pre-saved research evidence:
+   data = client.fetch_research_json("research/evidence.json")
+   ```
+3. The operator parses and reduces that body inside the sandbox. It never prints the full response into model context. Never write scratch bash scripts or manual regex to unwrap MCP `TextContent` or markdown prefixes.
 
 Code Mode cannot call Playwright tools marked destructive, including `browser_navigate` and `browser_evaluate`. Do not disable or bypass that check.
 
