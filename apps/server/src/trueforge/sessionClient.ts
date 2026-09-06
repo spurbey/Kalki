@@ -141,7 +141,7 @@ export class TrueForgeClient {
       config: {
         iteration_limit: 100,
         sandbox: { enabled: true, file_downloads: true },
-        dynamic_sub_agents: { enabled: true },
+        dynamic_sub_agents: { enabled: false },
         context_management: {
           compaction: { enabled: true },
           large_tool_response: { enabled: true },

@@ -349,7 +349,7 @@ const EvaluationRepeatSchema = z
   .strict();
 const EvaluationFindingSchema = z
   .object({
-    kind: z.enum(['repetition', 'tool_failure', 'incomplete']),
+    kind: z.enum(['repetition', 'tool_failure', 'model_protocol', 'incomplete']),
     message: z.string().min(1).max(500),
     evidence: z.array(EvaluationEvidenceSchema).max(10),
   })

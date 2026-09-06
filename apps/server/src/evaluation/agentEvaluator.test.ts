@@ -131,4 +131,35 @@ describe("agent evaluator", () => {
     });
     expect(report.tool_calls.action_counts[1]?.action).toHaveLength(200);
   });
+
+  it("reports textual tool markup that TrueForge could not execute", () => {
+    const events = [
+      event(1, "agent.turn.created", {
+        turn_id: "turn_1",
+        event: { type: "turn.created", turn_id: "turn_1" },
+      }),
+      event(2, "agent.model.message.delta", {
+        turn_id: "turn_1",
+        event: {
+          type: "model.message.delta",
+          content: "<tool_call><function=exec></function></tool_call>",
+        },
+      }),
+      event(3, "agent.turn.done", {
+        turn_id: "turn_1",
+        event: { type: "turn.done", state: { status: "done" } },
+      }),
+    ];
+
+    const report = evaluateWorkbook(events, {
+      workbook: { id: "wb_eval" },
+      tasks: [{ state: "aligning" }],
+      pending_question: null,
+    } as unknown as WorkbookSnapshot);
+
+    expect(report.findings.map((finding) => finding.kind)).toEqual([
+      "model_protocol",
+      "incomplete",
+    ]);
+  });
 });

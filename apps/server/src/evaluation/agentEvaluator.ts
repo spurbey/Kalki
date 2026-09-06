@@ -157,6 +157,12 @@ function failedToolResponse(event: WorkbookEvent): boolean {
   }
 }
 
+function textualToolCall(event: WorkbookEvent): boolean {
+  const source = objectValue(event.payload.event);
+  const content = textValue(source?.content);
+  return Boolean(content?.includes("<tool_call>") && content.includes("</tool_call>"));
+}
+
 function repeatGroups(observations: Observation[]) {
   const groups: Array<{
     action: string;
@@ -202,6 +208,9 @@ export function evaluateWorkbook(
   const repeats = repeatGroups(observations);
   const failedToolEvents = events.filter(failedToolResponse);
   const failedResponses = failedToolEvents.length;
+  const textualToolCallEvents = events.filter(
+    (event) => textualToolCall(event) && observationsFrom(event).length === 0,
+  );
   const actionCounts = [
     ...observations.reduce((counts, value) => {
       counts.set(value.action, (counts.get(value.action) ?? 0) + 1);
@@ -242,6 +251,17 @@ export function evaluateWorkbook(
       kind: "tool_failure" as const,
       message: `${failedResponses} tool response(s) reported a failure or non-zero exit code.`,
       evidence: failedToolEvents.slice(0, 10).map((event) => ({
+        seq: event.seq,
+        turn_id: turnIdFor(event),
+      })),
+    });
+  }
+  if (textualToolCallEvents.length > 0) {
+    findings.push({
+      kind: "model_protocol" as const,
+      message:
+        "The model emitted textual tool-call markup instead of a structured tool call; no tool was executed. Use a TrueForge model with native tool calling.",
+      evidence: textualToolCallEvents.slice(0, 10).map((event) => ({
         seq: event.seq,
         turn_id: turnIdFor(event),
       })),
