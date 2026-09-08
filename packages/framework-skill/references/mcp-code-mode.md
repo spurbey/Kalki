@@ -17,6 +17,8 @@ Invoke the script through Python because the global symlink can inherit Windows 
 
 The coordinator uses the preloaded `kalki-workbook` browser research tools for reconnaissance. Use Code Mode when arguments come from workspace files or tool output must be reduced before entering model context.
 
+For schema registration, use `python -m kalki_runtime.schema_cli register` from the task workspace. It reads and validates the files under `schemas/` and sends one compact result through the existing `register_schema` tool; do not paste schema objects into a model tool call.
+
 For browser-backed operators:
 
 1. The coordinator calls `browser_research_navigate` before starting the pipeline.

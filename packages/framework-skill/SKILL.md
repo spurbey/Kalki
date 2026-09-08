@@ -34,7 +34,7 @@ description: Build reviewed web-research workflows that keep raw data in files a
 3. Align the request and author `task.md`; call `register_task`.
 4. Ask the canonical task review question and wait for the user.
 5. Explore the unfamiliar source with the compact `browser_research_*` tools. Inspect one representative page, determine the repeatable URL pattern, and save only the returned facts under `research/`.
-6. Stop reconnaissance after the representative page is understood. Author the complete schema set, lint it, and call `register_schema` once with every table. Do not read runner internals to plan the next stage.
+6. Stop reconnaissance after the representative page is understood. Author the complete schema set, then run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.schema_cli register` (pass `--task-id` only when `.kalki/workspace.json` is unavailable). The command validates every schema, computes the contract values, and calls `register_schema` once. Do not construct the registration JSON by hand.
 7. Ask the schema review question and wait for the user.
 8. Generate operators from the recorded evidence and author one pipeline YAML. Source-only workflows use `transforms: []`.
 9. Run the pipeline CLI with `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client"`.
