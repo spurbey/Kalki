@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import { DomainError } from "../domain/errors.js";
 import { PlaywrightBrowser } from "./playwrightClient.js";
 
-const browser = new PlaywrightBrowser();
+export const browser = new PlaywrightBrowser();
 
 export const browserRoutes = new Hono();
 

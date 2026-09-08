@@ -18,7 +18,7 @@ import {
 } from "@kalki/contracts";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { browserRoutes } from "./browser/routes.js";
+import { browser, browserRoutes } from "./browser/routes.js";
 import { config } from "./config.js";
 import { openDatabase } from "./db/database.js";
 import { DomainError } from "./domain/errors.js";
@@ -45,7 +45,7 @@ const turningWorkbooks = new Set<string>();
 const turns = new TurnMonitor(workbooks, events, trueForge);
 
 turns.start();
-startWorkbookMcp(workbooks);
+startWorkbookMcp(workbooks, browser);
 app.route("/", browserRoutes);
 
 function trueForgeUnavailable(error: unknown) {

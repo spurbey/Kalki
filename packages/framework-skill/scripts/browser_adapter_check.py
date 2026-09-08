@@ -1,3 +1,5 @@
+import base64
+import gzip
 import json
 import tempfile
 from pathlib import Path
@@ -92,11 +94,44 @@ def test_network_requests_parsing() -> None:
         assert len(reqs) == 1 and reqs[0]["url"] == "https://algolia.net"
 
 
+def test_fetch_pages() -> None:
+    from unittest.mock import patch
+
+    client = BrowserAcquisitionClient()
+    result = {
+        "ok": True,
+        "data": {
+            "pages": [
+                {
+                    "url": "https://example.com/one",
+                    "status": 200,
+                    "content_type": "text/html",
+                    "body_base64": base64.b64encode(gzip.compress(b"<html>one</html>")).decode("ascii"),
+                    "body_encoding": "gzip+base64",
+                    "body_chars": 16,
+                    "truncated": False,
+                    "error": None,
+                }
+            ]
+        },
+    }
+    with patch("kalki_runtime.browser.call_mcp_tool", return_value=result) as call:
+        pages = client.fetch_pages(["https://example.com/one"], max_chars=10_000)
+    assert pages[0]["status"] == 200
+    assert pages[0]["body"] == "<html>one</html>"
+    call.assert_called_once_with(
+        "kalki-workbook",
+        "browser_fetch_pages",
+        {"urls": ["https://example.com/one"], "max_chars": 10_000},
+    )
+
+
 def main() -> None:
     test_unwrap_mcp_text()
     test_unicode_preservation()
     test_fetch_research_json()
     test_network_requests_parsing()
+    test_fetch_pages()
     print("BROWSER_ADAPTER_CHECK_OK")
 
 

@@ -238,6 +238,32 @@ const BrowserUrlSchema = z
     return protocol === 'http:' || protocol === 'https:';
   }, 'Browser URL must use HTTP or HTTPS');
 
+export const BrowserFetchPagesInputSchema = z
+  .object({
+    urls: z.array(BrowserUrlSchema).min(1).max(5),
+    max_chars: z.number().int().min(10_000).max(120_000).default(80_000),
+  })
+  .strict();
+
+const BrowserFetchedPageSchema = z
+  .object({
+    url: BrowserUrlSchema,
+    status: z.number().int().min(0).max(999).nullable(),
+    content_type: z.string().max(200).nullable(),
+    body_base64: z.string().max(200_000).nullable(),
+    body_encoding: z.literal('gzip+base64').nullable(),
+    body_chars: z.number().int().nonnegative().max(120_000).nullable(),
+    truncated: z.boolean(),
+    error: z.string().max(1000).nullable(),
+  })
+  .strict();
+
+export const BrowserFetchPagesDataSchema = z
+  .object({
+    pages: z.array(BrowserFetchedPageSchema).min(1).max(5),
+  })
+  .strict();
+
 export const BrowserStatusSchema = z
   .object({
     available: z.boolean(),
@@ -585,6 +611,7 @@ export const WorkbookToolResultSchema = z.discriminatedUnion('ok', [
 
 export const WorkbookToolNameSchema = z.enum([
   'get_workbook_context',
+  'browser_fetch_pages',
   'register_task',
   'register_schema',
   'start_run',
@@ -616,6 +643,13 @@ export const WORKBOOK_TOOL_DEFINITIONS = [
     description:
       'Read compact workbook state without returning formal table rows.',
     inputSchema: GetWorkbookContextInputSchema,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+  },
+  {
+    name: 'browser_fetch_pages',
+    description:
+      'Fetch up to five HTTP pages through the current shared browser tab and return bounded bodies for a generated operator.',
+    inputSchema: BrowserFetchPagesInputSchema,
     annotations: READ_ONLY_TOOL_ANNOTATIONS,
   },
   {
@@ -676,6 +710,8 @@ export type StartRunData = z.infer<typeof StartRunDataSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type BrowserStatus = z.infer<typeof BrowserStatusSchema>;
 export type BrowserNavigateInput = z.infer<typeof BrowserNavigateInputSchema>;
+export type BrowserFetchPagesInput = z.infer<typeof BrowserFetchPagesInputSchema>;
+export type BrowserFetchPagesData = z.infer<typeof BrowserFetchPagesDataSchema>;
 export type BrowserRunCodeInput = z.infer<typeof BrowserRunCodeInputSchema>;
 export type BrowserInteractionInput = z.infer<typeof BrowserInteractionInputSchema>;
 export type BrowserStatusResponse = z.infer<typeof BrowserStatusResponseSchema>;

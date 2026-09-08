@@ -3,6 +3,7 @@ import {
   AnswerQuestionInputSchema,
   CompleteRunInputSchema,
   BrowserInteractionInputSchema,
+  BrowserFetchPagesInputSchema,
   BrowserNavigateInputSchema,
   BrowserRunCodeInputSchema,
   PlaywrightToolResultSchema,
@@ -42,6 +43,7 @@ describe('workbook MCP surface', () => {
   it('advertises exactly the nine reviewed tools', () => {
     expect(WORKBOOK_TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([
       'get_workbook_context',
+      'browser_fetch_pages',
       'register_task',
       'register_schema',
       'start_run',
@@ -74,6 +76,14 @@ describe('workbook MCP surface', () => {
           openWorldHint: false,
         },
       },
+      {
+        name: 'browser_fetch_pages',
+        annotations: {
+          readOnlyHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
       { name: 'register_task', annotations: undefined },
       { name: 'register_schema', annotations: undefined },
       { name: 'start_run', annotations: undefined },
@@ -94,6 +104,24 @@ describe('workbook MCP surface', () => {
 });
 
 describe('browser boundary', () => {
+  it('bounds browser page fetches', () => {
+    expect(
+      BrowserFetchPagesInputSchema.safeParse({
+        urls: Array.from({ length: 5 }, (_, index) => `https://example.com/${index}`),
+      }).success,
+    ).toBe(true);
+    expect(
+      BrowserFetchPagesInputSchema.safeParse({
+        urls: Array.from({ length: 6 }, () => 'https://example.com'),
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserFetchPagesInputSchema.safeParse({
+        urls: ['ftp://example.com'],
+      }).success,
+    ).toBe(false);
+  });
+
   it('bounds navigation URLs and validates MCP tool results', () => {
     expect(
       BrowserNavigateInputSchema.safeParse({

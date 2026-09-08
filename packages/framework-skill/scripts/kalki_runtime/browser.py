@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import gzip
 import json
 import re
 import subprocess
@@ -88,8 +90,12 @@ def unwrap_mcp_text(raw_output: Any) -> str:
     return text.strip()
 
 
-def call_playwright_tool(tool_name: str, arguments: Mapping[str, Any] | None = None) -> str:
-    """Executes a Playwright MCP tool through the available client or CLI and returns normalized text."""
+def call_mcp_tool(
+    server: str,
+    tool_name: str,
+    arguments: Mapping[str, Any] | None = None,
+) -> Any:
+    """Calls an MCP tool through Code Mode and returns its projected value."""
     args = arguments or {}
 
     # Attempt direct in-process call if mcp-client package is on disk
@@ -107,10 +113,10 @@ def call_playwright_tool(tool_name: str, arguments: Mapping[str, Any] | None = N
         if loop and loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                result = executor.submit(asyncio.run, call_tool("playwright", tool_name, args)).result()
+                result = executor.submit(asyncio.run, call_tool(server, tool_name, args)).result()
         else:
-            result = asyncio.run(call_tool("playwright", tool_name, args))
-        return unwrap_mcp_text(result)
+            result = asyncio.run(call_tool(server, tool_name, args))
+        return result
     except (ImportError, ModuleNotFoundError):
         pass
 
@@ -122,13 +128,21 @@ def call_playwright_tool(tool_name: str, arguments: Mapping[str, Any] | None = N
     ]
     cli_path = next((str(p) for p in cli_candidates if p.exists()), "/opt/tf/mcp-client/mcp_client.py")
 
-    cmd = [sys.executable, cli_path, "call-tool", "playwright", tool_name, json.dumps(args)]
+    cmd = [sys.executable, cli_path, "call-tool", server, tool_name, json.dumps(args)]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         err_msg = proc.stderr.strip() or proc.stdout.strip()
-        raise RuntimeError(f"Playwright tool '{tool_name}' failed with code {proc.returncode}: {err_msg}")
+        raise RuntimeError(f"MCP tool '{server}/{tool_name}' failed with code {proc.returncode}: {err_msg}")
 
-    return unwrap_mcp_text(proc.stdout)
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return proc.stdout
+
+
+def call_playwright_tool(tool_name: str, arguments: Mapping[str, Any] | None = None) -> str:
+    """Executes a Playwright MCP tool and returns normalized text."""
+    return unwrap_mcp_text(call_mcp_tool("playwright", tool_name, arguments))
 
 
 class BrowserAcquisitionClient:
@@ -187,6 +201,52 @@ class BrowserAcquisitionClient:
             if match:
                 return json.loads(match.group(1), strict=False)
             raise ValueError(f"Failed to decode JSON from network request {request_index}: {exc}") from exc
+
+    def fetch_pages(
+        self,
+        urls: list[str],
+        max_chars: int = 80_000,
+    ) -> list[dict[str, Any]]:
+        """Fetches a small batch of pages through the current shared browser tab."""
+        if not 1 <= len(urls) <= 5:
+            raise ValueError("fetch_pages accepts between 1 and 5 URLs")
+        if not 10_000 <= max_chars <= 120_000:
+            raise ValueError("max_chars must be between 10000 and 120000")
+
+        result = call_mcp_tool(
+            "kalki-workbook",
+            "browser_fetch_pages",
+            {"urls": urls, "max_chars": max_chars},
+        )
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            error = result.get("error") if isinstance(result, dict) else result
+            raise RuntimeError(f"browser_fetch_pages failed: {error}")
+        data = result.get("data")
+        pages = data.get("pages") if isinstance(data, dict) else None
+        if not isinstance(pages, list) or not 1 <= len(pages) <= 5:
+            raise RuntimeError("browser_fetch_pages returned an invalid page list")
+        normalized = []
+        for page in pages:
+            if not isinstance(page, dict):
+                raise RuntimeError("browser_fetch_pages returned an invalid page")
+            encoded = page.get("body_base64")
+            if encoded is not None:
+                if page.get("body_encoding") != "gzip+base64":
+                    raise RuntimeError("browser_fetch_pages returned an unknown body encoding")
+                try:
+                    body = gzip.decompress(base64.b64decode(encoded, validate=True)).decode("utf-8")
+                except (ValueError, OSError, UnicodeDecodeError) as exc:
+                    raise RuntimeError(f"browser_fetch_pages returned an invalid body: {exc}") from exc
+            else:
+                body = None
+            clean_page = {
+                key: value
+                for key, value in page.items()
+                if key not in {"body_base64", "body_encoding"}
+            }
+            clean_page["body"] = body
+            normalized.append(clean_page)
+        return normalized
 
     def fetch_page_snapshot(self, depth: int = 5) -> str:
         """Fetches bounded accessibility snapshot of the current page."""
