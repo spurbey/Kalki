@@ -83,7 +83,7 @@ def run_test(pipeline: LoadedPipeline, run_id: str, limit: int) -> dict[str, obj
         config=source["config"],
         limit=limit,
         http=client,
-        browser=BrowserAcquisitionClient(max_response_bytes=execution["max_response_bytes"]),
+        browser=BrowserAcquisitionClient(workspace=pipeline.workspace, max_response_bytes=execution["max_response_bytes"]),
     )
     source_records = list(islice(source_class().collect(source_context), limit))
     if len(source_records) != limit:
@@ -402,7 +402,7 @@ def start_production(pipeline: LoadedPipeline, run_id: str) -> dict[str, object]
             timeout=execution["request_timeout_seconds"],
             max_bytes=execution["max_response_bytes"],
         ),
-        browser=BrowserAcquisitionClient(max_response_bytes=execution["max_response_bytes"]),
+        browser=BrowserAcquisitionClient(workspace=pipeline.workspace, max_response_bytes=execution["max_response_bytes"]),
     )
     source_records = _validated_records(list(source_class().collect(context)), pipeline.schemas[source["table"]])
     if not source_records:

@@ -1,9 +1,43 @@
+import asyncio
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping
+
+
+def _safe_unescape_text(s: str) -> str:
+    r"""Safely decodes standard string escape sequences (\", \', \\, \n, \r, \t, \uXXXX)
+    without corrupting existing UTF-8 characters like 'José'.
+    """
+    if not s or "\\" not in s:
+        return s
+
+    # 1. Unescape \uXXXX unicode escapes
+    def replace_unicode(m: re.Match[str]) -> str:
+        try:
+            return chr(int(m.group(1), 16))
+        except ValueError:
+            return m.group(0)
+
+    s = re.sub(r"\\u([0-9a-fA-F]{4})", replace_unicode, s)
+
+    # 2. Unescape standard control and quote escapes
+    escape_map = {
+        '\\"': '"',
+        "\\'": "'",
+        "\\\\": "\\",
+        "\\n": "\n",
+        "\\r": "\r",
+        "\\t": "\t",
+        "\\b": "\b",
+        "\\f": "\f",
+    }
+    for esc, repl in escape_map.items():
+        if esc in s:
+            s = s.replace(esc, repl)
+    return s
 
 
 def unwrap_mcp_text(raw_output: Any) -> str:
@@ -42,22 +76,14 @@ def unwrap_mcp_text(raw_output: Any) -> str:
     # 2. If it's a python repr string dumped from CLI stdout: e.g. text='### Result\n...'
     repr_match = re.search(r"text=(['\"])(.*?)\1", text, flags=re.DOTALL)
     if repr_match:
-        raw_inner = repr_match.group(2)
-        try:
-            text = raw_inner.encode("utf-8").decode("unicode_escape")
-        except Exception:
-            text = raw_inner
+        text = _safe_unescape_text(repr_match.group(2))
 
     # 3. Strip standard MCP Markdown headings emitted by Playwright tool wrapper
     text = re.sub(r"^###\s+Result\s*\n?", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^###\s+Page\s*\n?", "", text, flags=re.IGNORECASE)
 
-    # 4. If string still contains literal escaped quotes or escaped newlines, decode them
-    if '\\"' in text or '\\n' in text:
-        try:
-            text = text.encode("utf-8").decode("unicode_escape")
-        except Exception:
-            pass
+    # 4. If string still contains literal escaped quotes or escaped newlines, safely unescape them
+    text = _safe_unescape_text(text)
 
     return text.strip()
 
@@ -66,16 +92,26 @@ def call_playwright_tool(tool_name: str, arguments: Mapping[str, Any] | None = N
     """Executes a Playwright MCP tool through the available client or CLI and returns normalized text."""
     args = arguments or {}
 
-    # Attempt direct import if mcp-client package is on disk
+    # Attempt direct in-process call if mcp-client package is on disk
     mcp_dir = Path("/opt/tf/mcp-client")
     if mcp_dir.exists() and str(mcp_dir) not in sys.path:
         sys.path.insert(0, str(mcp_dir))
 
     try:
-        from mcp_client import call_tool_sync  # type: ignore
-        result = call_tool_sync("playwright", tool_name, args)
+        from mcp_client import call_tool  # type: ignore
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                result = executor.submit(asyncio.run, call_tool("playwright", tool_name, args)).result()
+        else:
+            result = asyncio.run(call_tool("playwright", tool_name, args))
         return unwrap_mcp_text(result)
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         pass
 
     # Fallback to subprocess invocation via CLI
@@ -98,7 +134,8 @@ def call_playwright_tool(tool_name: str, arguments: Mapping[str, Any] | None = N
 class BrowserAcquisitionClient:
     """Safe browser acquisition client providing bounded, normalized data extraction for operators."""
 
-    def __init__(self, max_response_bytes: int = 10 * 1024 * 1024):
+    def __init__(self, workspace: Path | str | None = None, max_response_bytes: int = 10 * 1024 * 1024):
+        self.workspace = Path(workspace).resolve() if workspace else Path.cwd().resolve()
         self.max_response_bytes = max_response_bytes
 
     def fetch_network_requests(self, filter_term: str | None = None) -> list[dict[str, Any]]:
@@ -111,6 +148,8 @@ class BrowserAcquisitionClient:
             parsed = json.loads(raw)
             if isinstance(parsed, list):
                 return parsed
+            if isinstance(parsed, dict) and isinstance(parsed.get("requests"), list):
+                return parsed["requests"]
         except Exception:
             pass
 
@@ -154,9 +193,18 @@ class BrowserAcquisitionClient:
         return call_playwright_tool("browser_snapshot", {"depth": depth})
 
     def fetch_research_json(self, relative_path: str | Path) -> Any:
-        """Reads pre-saved research evidence JSON (e.g. research/founders.json) without network overhead."""
-        p = Path(relative_path)
-        if not p.exists():
-            raise FileNotFoundError(f"Research artifact not found: {p}")
-        with open(p, "r", encoding="utf-8") as f:
+        """Reads pre-saved research evidence JSON without network overhead, confined to the workspace."""
+        path = Path(relative_path)
+        if path.is_absolute():
+            resolved = path.resolve()
+        else:
+            resolved = (self.workspace / path).resolve()
+
+        if not resolved.is_relative_to(self.workspace):
+            raise ValueError(f"Research path escapes workspace: {relative_path}")
+
+        if not resolved.exists():
+            raise FileNotFoundError(f"Research artifact not found: {resolved}")
+
+        with open(resolved, "r", encoding="utf-8") as f:
             return json.load(f, strict=False)
