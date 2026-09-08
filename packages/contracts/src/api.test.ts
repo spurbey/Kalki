@@ -40,10 +40,15 @@ const publication = {
 };
 
 describe('workbook MCP surface', () => {
-  it('advertises exactly the nine reviewed tools', () => {
+  it('advertises the reviewed workbook and research tools', () => {
     expect(WORKBOOK_TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([
       'get_workbook_context',
       'browser_fetch_pages',
+      'browser_research_navigate',
+      'browser_research_snapshot',
+      'browser_research_click',
+      'browser_research_network',
+      'browser_research_evaluate',
       'register_task',
       'register_schema',
       'start_run',
@@ -84,6 +89,25 @@ describe('workbook MCP surface', () => {
           openWorldHint: false,
         },
       },
+      { name: 'browser_research_navigate', annotations: undefined },
+      {
+        name: 'browser_research_snapshot',
+        annotations: {
+          readOnlyHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      { name: 'browser_research_click', annotations: undefined },
+      {
+        name: 'browser_research_network',
+        annotations: {
+          readOnlyHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      { name: 'browser_research_evaluate', annotations: undefined },
       { name: 'register_task', annotations: undefined },
       { name: 'register_schema', annotations: undefined },
       { name: 'start_run', annotations: undefined },

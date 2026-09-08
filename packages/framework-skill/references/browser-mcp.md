@@ -1,18 +1,20 @@
 # Browser MCP
 
-Use Playwright for bounded reconnaissance and browser-backed source access.
+Use the Kalki browser research tools for bounded reconnaissance and browser-backed source access. They keep raw Playwright output out of the coordinator context.
 
-1. Discover the configured Playwright tools through TrueForge.
-2. Open the user-facing source with `browser_navigate`.
-3. Use `browser_snapshot` to confirm the source identity and interact with visible controls when needed.
-4. Use `browser_network_requests` to list relevant non-static requests.
-5. Inspect only promising requests with `browser_network_request`.
-6. Record the observed URL, method, parameters, response paths, and source meaning as compact files under `research/`.
+1. Open the user-facing source with `browser_research_navigate`.
+2. Use `browser_research_snapshot` to confirm source identity and inspect bounded visible structure.
+3. Use `browser_research_click` only with a reference from the latest observation.
+4. Use `browser_research_network` to list relevant non-static requests, then inspect only one promising request part at a time.
+5. Use `browser_research_evaluate` only for a small field or link extraction; never return full HTML.
+6. Record the returned URL, method, parameters, response paths, and source meaning as compact files under `research/`.
 7. Save the repeatable URL pattern or compact URL list under `research/` and generate the source operator from that evidence.
+
+Each research response is bounded and structured as URL, title, summary, items, and a truncation flag. Full browser output remains outside the model context.
 
 For execution, keep the approval boundary explicit:
 
-1. The root coordinator directly navigates to the reviewed page or deterministic JSON endpoint immediately before the pipeline run.
+1. The root coordinator uses `browser_research_navigate` to open the reviewed page or deterministic JSON endpoint immediately before the pipeline run.
 2. The generated operator fetches the remaining reviewed URLs through `context.browser`:
    ```python
    pages = context.browser.fetch_pages(urls[:5])

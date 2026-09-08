@@ -1,6 +1,11 @@
 import { serve } from '@hono/node-server';
 import {
   BrowserFetchPagesInputSchema,
+  BrowserResearchClickInputSchema,
+  BrowserResearchEvaluateInputSchema,
+  BrowserResearchNavigateInputSchema,
+  BrowserResearchNetworkInputSchema,
+  BrowserResearchSnapshotInputSchema,
   CompleteRunInputSchema,
   GetWorkbookContextInputSchema,
   ProductionAuthorizationInputSchema,
@@ -80,6 +85,73 @@ function createServer(workbooks: WorkbookService, browser: PlaywrightBrowser) {
       annotations: READ_ONLY_TOOL_ANNOTATIONS,
     },
     (input) => execute(() => browser.fetchPages(BrowserFetchPagesInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'browser_research_navigate',
+    {
+      description:
+        'Navigate the shared headed browser and return a compact page observation; full browser output is kept out of the model context.',
+      inputSchema: BrowserResearchNavigateInputSchema,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchNavigate(BrowserResearchNavigateInputSchema.parse(input)),
+      ),
+  );
+
+  server.registerTool(
+    'browser_research_snapshot',
+    {
+      description:
+        'Return a bounded accessibility observation of the current shared browser page with useful structure, links, and controls.',
+      inputSchema: BrowserResearchSnapshotInputSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchSnapshot(BrowserResearchSnapshotInputSchema.parse(input)),
+      ),
+  );
+
+  server.registerTool(
+    'browser_research_click',
+    {
+      description:
+        'Click one reference from the latest browser observation and return a fresh compact observation.',
+      inputSchema: BrowserResearchClickInputSchema,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchClick(BrowserResearchClickInputSchema.parse(input)),
+      ),
+  );
+
+  server.registerTool(
+    'browser_research_network',
+    {
+      description:
+        'List compact non-static page requests, or inspect one promising request part without returning unbounded headers or bodies.',
+      inputSchema: BrowserResearchNetworkInputSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchNetwork(BrowserResearchNetworkInputSchema.parse(input)),
+      ),
+  );
+
+  server.registerTool(
+    'browser_research_evaluate',
+    {
+      description:
+        'Run a bounded page extraction function and return a clipped result. Extract only fields needed to understand the source; never return full HTML.',
+      inputSchema: BrowserResearchEvaluateInputSchema,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchEvaluate(BrowserResearchEvaluateInputSchema.parse(input)),
+      ),
   );
 
   server.registerTool(

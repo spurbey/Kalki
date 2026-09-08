@@ -1,4 +1,9 @@
 import {
+  BrowserResearchClickInputSchema,
+  BrowserResearchEvaluateInputSchema,
+  BrowserResearchNavigateInputSchema,
+  BrowserResearchNetworkInputSchema,
+  BrowserResearchSnapshotInputSchema,
   BrowserFetchPagesDataSchema,
   BrowserFetchPagesInputSchema,
   BrowserRunCodeInputSchema,
@@ -6,12 +11,19 @@ import {
   type BrowserInteractionInput,
   type BrowserFetchPagesData,
   type BrowserFetchPagesInput,
+  type BrowserResearchClickInput,
+  type BrowserResearchData,
+  type BrowserResearchEvaluateInput,
+  type BrowserResearchNavigateInput,
+  type BrowserResearchNetworkInput,
+  type BrowserResearchSnapshotInput,
   type BrowserStatus,
   type PlaywrightToolResult,
 } from "@kalki/contracts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { config } from "../config.js";
+import { formatResearchResult } from "./researchFormatter.js";
 
 type BrowserTab = {
   index: number;
@@ -144,6 +156,80 @@ export class PlaywrightBrowser {
         screenshot_at: this.screenshotAt,
         error: null,
       } satisfies BrowserStatus;
+    });
+  }
+
+  async researchNavigate(
+    input: BrowserResearchNavigateInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchNavigateInputSchema.parse(input);
+      await this.callTool("browser_navigate", { url: requested.url });
+      const snapshot = await this.callTool("browser_snapshot", { depth: 5 });
+      return formatResearchResult("navigate", resultText(snapshot), requested.url);
+    });
+  }
+
+  async researchSnapshot(
+    input: BrowserResearchSnapshotInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchSnapshotInputSchema.parse(input);
+      const current = await this.prepareResearchPage();
+      const result = await this.callTool("browser_snapshot", {
+        ...(requested.target ? { target: requested.target } : {}),
+        ...(requested.depth ? { depth: requested.depth } : {}),
+      });
+      return formatResearchResult("snapshot", resultText(result), current?.url || null);
+    });
+  }
+
+  async researchClick(
+    input: BrowserResearchClickInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchClickInputSchema.parse(input);
+      const current = await this.prepareResearchPage();
+      await this.callTool("browser_click", {
+        target: requested.target,
+        ...(requested.element ? { element: requested.element } : {}),
+      });
+      const snapshot = await this.callTool("browser_snapshot", { depth: 5 });
+      return formatResearchResult("click", resultText(snapshot), current?.url || null);
+    });
+  }
+
+  async researchNetwork(
+    input: BrowserResearchNetworkInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchNetworkInputSchema.parse(input);
+      const current = await this.prepareResearchPage();
+      const result = requested.request_index
+        ? await this.callTool("browser_network_request", {
+            index: requested.request_index,
+            ...(requested.part ? { part: requested.part } : {}),
+          })
+        : await this.callTool("browser_network_requests", {
+            static: false,
+            ...(requested.filter ? { filter: requested.filter } : {}),
+          });
+      return formatResearchResult("network", resultText(result), current?.url || null);
+    });
+  }
+
+  async researchEvaluate(
+    input: BrowserResearchEvaluateInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchEvaluateInputSchema.parse(input);
+      const current = await this.prepareResearchPage();
+      const result = await this.callTool("browser_evaluate", {
+        function: requested.function,
+        ...(requested.target ? { target: requested.target } : {}),
+        ...(requested.element ? { element: requested.element } : {}),
+      });
+      return formatResearchResult("evaluate", resultText(result), current?.url || null);
     });
   }
 
@@ -298,6 +384,18 @@ export class PlaywrightBrowser {
   private async readTabs(): Promise<BrowserTab[]> {
     const result = await this.callTool("browser_tabs", { action: "list" });
     return parseTabs(resultText(result));
+  }
+
+  private async prepareResearchPage(): Promise<BrowserTab | null> {
+    const tabs = await this.readTabs();
+    const aligned = await this.alignResearchTab(tabs);
+    const current = aligned.find((tab) => tab.current) ?? aligned[0] ?? null;
+    if (!current || current.url === "about:blank") {
+      throw new Error(
+        "Navigate the shared browser to a source before using research tools",
+      );
+    }
+    return current;
   }
 
   private async alignResearchTab(tabs: BrowserTab[]): Promise<BrowserTab[]> {
