@@ -15,7 +15,7 @@ description: Build reviewed web-research workflows that keep raw data in files a
 - Only the root coordinator asks the user questions or interprets an answer.
 - Call `get_workbook_context` at the start of each stage and after compaction or recovery.
 - Reuse the current task id returned by `get_workbook_context`; do not register a duplicate task after recovery.
-- Inspect the workbook MCP tool list before calling a command. The current slice implements every workflow tool except `promote_skill`.
+- Inspect the workbook MCP tool list before calling a command. The current slice includes the read-only `browser_fetch_pages` bridge; `promote_skill` may still be unavailable.
 - Use `kalki_runtime.schema_loader` and `pipeline_cli lint` for contract hashes. Never hand-roll schema or pipeline hashes.
 - Soft No-Progress Rule: If two attempts using the same strategy fail, checkpoint observed evidence and change strategy immediately. Do not repeatedly decode, parse, or regex-split the same raw payload with scratch scripts.
 - Stage Discipline: Keep each turn focused on exactly one workflow stage: exploration, schema, build, or test. Complete the active stage or checkpoint evidence before initiating subsequent steps.
@@ -33,8 +33,8 @@ description: Build reviewed web-research workflows that keep raw data in files a
 
 3. Align the request and author `task.md`; call `register_task`.
 4. Ask the canonical task review question and wait for the user.
-5. Explore the unfamiliar source with Playwright, inspect relevant network requests, and save compact evidence under `research/`.
-6. Author the complete schema set, lint it, and call `register_schema` once with every table.
+5. Explore the unfamiliar source with Playwright. Inspect one representative page, determine the repeatable URL pattern, and save compact evidence (such as the URL list) under `research/`.
+6. Stop reconnaissance after the representative page is understood. Author the complete schema set, lint it, and call `register_schema` once with every table. Do not read runner internals to plan the next stage.
 7. Ask the schema review question and wait for the user.
 8. Generate operators from the recorded evidence and author one pipeline YAML. Source-only workflows use `transforms: []`.
 9. Run the pipeline CLI with `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client"`.
@@ -53,7 +53,8 @@ Skill promotion remains unavailable until `promote_skill` appears in `tools/list
 - Playwright MCP owns browser exploration and browser-backed collection.
 - Shell and Python own task files and deterministic data processing.
 - Generated operators never connect to SQLite or call workbook mutation tools.
-- The root coordinator calls navigation and interaction tools directly. A generated source operator may use `mcp_client.call_tool` only with safe Playwright read tools to consume responses already captured by that browser session.
+- The root coordinator calls navigation and interaction tools directly. A generated source operator may use `context.browser.fetch_pages()` to fetch up to five reviewed URLs through the current shared browser tab; it parses the bounded bodies inside the sandbox.
+- The coordinator must navigate the shared tab to the reviewed source before the pipeline runs. The operator does not navigate, evaluate arbitrary JavaScript, or interact with the page.
 - Do not bypass TrueForge approval checks or call `browser_navigate`, `browser_evaluate`, or other destructive tools from Code Mode.
 - A Playwright tool `filename` is written on the MCP host, not inside Daytona. Do not treat it as a sandbox workspace file.
 

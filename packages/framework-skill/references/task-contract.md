@@ -9,6 +9,6 @@
 - Acceptance checks
 - Explicit non-goals
 
-Normalize one UTF-8 BOM away and convert CRLF or CR to LF before computing SHA-256. Register the normalized Markdown, workspace-relative path, and lowercase hash through `register_task`.
+Normalize one UTF-8 BOM away and convert CRLF or CR to LF before computing SHA-256. Use the exact normalized text in both the hash and `task_markdown` passed to `register_task`; do not reconstruct or shorten the string between those values.
 
 Do not put credentials, raw source responses, implementation code, or scratch notes in `task.md`.

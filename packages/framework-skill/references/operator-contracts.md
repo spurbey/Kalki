@@ -20,6 +20,6 @@ def transform(self, records, context: RunContext):
     yield RecordEnvelope(...)
 ```
 
-Read configuration from `context.config`. For a browser-backed source, the coordinator navigates to the reviewed URL before execution and the operator reads captured responses using `context.browser` (or `BrowserAcquisitionClient`), which normalizes MCP payloads into plain text or JSON without manual unwrapping. Transformers perform no network calls.
+Read configuration from `context.config`. For a browser-backed source, the coordinator navigates to the reviewed source before execution and the operator calls `context.browser.fetch_pages(urls)` in batches of at most five. The client returns decoded, bounded page bodies and page-level errors; parse them inside the sandbox and keep full records in JSONL. Transformers perform no network calls.
 
 Do not call navigation, evaluation, or interaction tools from Code Mode; TrueForge blocks those tools as destructive. Do not write JSONL directly, access SQLite, read secrets, bypass approval checks, or guess the workspace path.

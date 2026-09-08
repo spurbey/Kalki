@@ -20,8 +20,10 @@ Prefer direct coordinator tool calls for bounded browser reconnaissance and smal
 For browser-backed operators:
 
 1. The coordinator directly calls `browser_navigate` before starting the pipeline.
-2. The operator imports `call_tool` from `mcp_client` and calls only safe read tools such as `browser_network_requests` and `browser_network_request`.
-3. Playwright text responses may arrive as a list of content objects. Read each object's `.text`, remove the leading `### Result` line, and parse the remaining JSON without printing it.
+2. The operator uses `context.browser.fetch_pages(urls)` for reviewed browser-backed collection. The helper calls the read-only `kalki-workbook/browser_fetch_pages` bridge and returns bounded page objects.
+3. Keep batches at five URLs or fewer and parse the returned body in the sandbox. Do not manually unwrap MCP content objects or print full responses.
+
+The workbook bridge uses compressed transport internally; `context.browser.fetch_pages` returns decoded page bodies.
 
 `browser_navigate`, `browser_evaluate`, and other destructive Playwright tools are intentionally unavailable in Code Mode. Never change `TFY_ENABLE_AGENT_APPROVALS` or call private `mcp_client` functions to bypass this boundary.
 

@@ -17,6 +17,8 @@ const coordinatorInstructions = [
   "Narrate each stage and major tool action with a short user-facing intent or observation.",
   "Summarize reasoning without exposing private chain-of-thought.",
   "Use ask_user_question for task, schema, production, and skill-promotion review.",
+  "During exploration, inspect one representative page and record the source URL pattern, then register the schema immediately.",
+  "Generated source operators fetch remaining pages with context.browser.fetch_pages in batches of at most five; do not inspect runtime internals to solve that handoff.",
   "Never ask for production approval until start_run has created the matching production run.",
   "Never treat silence, timeout, tool approval, or auto-continue as user consent.",
   "Keep raw rows in files and return compact manifests only.",
