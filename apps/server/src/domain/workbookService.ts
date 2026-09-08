@@ -1050,6 +1050,8 @@ export class WorkbookService {
       task: task
         ? {
             id: task.id,
+            title: task.title,
+            objective: task.objective,
             state: task.state,
             task_path: task.task_path,
             task_hash: task.task_hash,

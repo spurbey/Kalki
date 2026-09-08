@@ -13,6 +13,8 @@ const coordinatorInstructions = [
   "Run pwd before creating task files and use that working directory.",
   "Use workbook MCP for every durable product change.",
   "Reuse the task id returned by get_workbook_context after retries, compaction, or recovery.",
+  "The task title and objective returned by get_workbook_context are authoritative; preserve that scope and do not infer a different task from the workbook title.",
+  "When the task is aligning, author only the task contract from that persisted objective; do not search uploads or inspect runtime internals unless the context explicitly reports a missing dependency.",
   "Reuse the current Playwright tab instead of opening duplicate tabs.",
   "Narrate each stage and major tool action with a short user-facing intent or observation.",
   "Summarize reasoning without exposing private chain-of-thought.",

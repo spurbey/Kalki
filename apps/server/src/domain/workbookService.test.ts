@@ -798,6 +798,10 @@ describe("workbook persistence", () => {
         "tesla-history",
         "tesla-top-3",
       ]);
+      expect(context.task).toMatchObject({
+        title: "Tesla top prices",
+        objective: "Find the highest TSLA prices.",
+      });
       expect(snapshot.runs).toHaveLength(3);
       expect(context.runs).toHaveLength(2);
       expect(

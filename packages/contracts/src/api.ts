@@ -137,6 +137,8 @@ export const GetWorkbookContextDataSchema = z
     }),
     task: TaskSchema.pick({
       id: true,
+      title: true,
+      objective: true,
       state: true,
       task_path: true,
       task_hash: true,
