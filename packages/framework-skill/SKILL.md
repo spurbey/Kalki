@@ -31,9 +31,9 @@ description: Build reviewed web-research workflows that keep raw data in files a
    python -m pip install --disable-pip-version-check --quiet --target "$PWD/.kalki/deps" -r /opt/tf/skills/kalki-framework/requirements.txt
    ```
 
-3. Align the request and author `task.md`; call `register_task`.
+3. Align the request and author `task.md`, then run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.task_cli register`. The command normalizes the file, computes its hash, and calls `register_task` once; do not construct that tool input by hand.
 4. Ask the canonical task review question and wait for the user.
-5. Explore the unfamiliar source with the compact `browser_research_*` tools. Inspect one representative page, determine the repeatable URL pattern, and save only the returned facts under `research/`.
+5. Explore the unfamiliar source with the compact `browser_research_*` tools. Inspect one representative page, determine the repeatable URL pattern, and save only the returned facts under `research/`. The coordinator must not call `browser_fetch_pages`; that tool is for generated operators inside the sandbox.
 6. Stop reconnaissance after the representative page is understood. Author the complete schema set, then run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.schema_cli register` (pass `--task-id` only when `.kalki/workspace.json` is unavailable). The command validates every schema, computes the contract values, and calls `register_schema` once. Do not construct the registration JSON by hand.
 7. Ask the schema review question and wait for the user.
 8. Generate operators from the recorded evidence and author one pipeline YAML. Source-only workflows use `transforms: []`.

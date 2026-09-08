@@ -3,6 +3,7 @@ import {
   AnswerQuestionInputSchema,
   CompleteRunInputSchema,
   BrowserInteractionInputSchema,
+  BrowserFetchPagesDataSchema,
   BrowserFetchPagesInputSchema,
   BrowserNavigateInputSchema,
   BrowserRunCodeInputSchema,
@@ -144,6 +145,25 @@ describe('browser boundary', () => {
         urls: ['ftp://example.com'],
       }).success,
     ).toBe(false);
+  });
+
+  it('allows actual source length when the returned body is bounded', () => {
+    expect(
+      BrowserFetchPagesDataSchema.safeParse({
+        pages: [
+          {
+            url: 'https://example.com',
+            status: 200,
+            content_type: 'text/html',
+            body_base64: null,
+            body_encoding: null,
+            body_chars: 1_000_000,
+            truncated: true,
+            error: null,
+          },
+        ],
+      }).success,
+    ).toBe(true);
   });
 
   it('bounds navigation URLs and validates MCP tool results', () => {

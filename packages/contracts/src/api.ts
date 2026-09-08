@@ -254,7 +254,7 @@ const BrowserFetchedPageSchema = z
     content_type: z.string().max(200).nullable(),
     body_base64: z.string().max(200_000).nullable(),
     body_encoding: z.literal('gzip+base64').nullable(),
-    body_chars: z.number().int().nonnegative().max(120_000).nullable(),
+    body_chars: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
     truncated: z.boolean(),
     error: z.string().max(1000).nullable(),
   })

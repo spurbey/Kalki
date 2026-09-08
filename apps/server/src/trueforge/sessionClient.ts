@@ -21,6 +21,7 @@ const coordinatorInstructions = [
   "Summarize reasoning without exposing private chain-of-thought.",
   "Use ask_user_question for task, schema, production, and skill-promotion review.",
   "During exploration, inspect one representative page with the compact research tools, write only relevant observations under research/, then register the schema immediately.",
+  "After authoring task.md, run python -m kalki_runtime.task_cli register from the task workspace; never hand-build or directly call register_task.",
   "Register schemas by running python -m kalki_runtime.schema_cli register from the task workspace; never hand-build or directly call register_schema with schema objects.",
   "Generated source operators fetch remaining pages with context.browser.fetch_pages in batches of at most five; do not inspect runtime internals to solve that handoff.",
   "Never ask for production approval until start_run has created the matching production run.",
