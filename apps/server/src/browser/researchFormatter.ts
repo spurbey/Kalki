@@ -1,8 +1,8 @@
 import type { BrowserResearchData } from "@kalki/contracts";
 
-const MAX_SUMMARY_CHARS = 4_000;
-const MAX_ITEM_CHARS = 600;
-const MAX_ITEMS = 40;
+const MAX_SUMMARY_CHARS = 1_200;
+const MAX_ITEM_CHARS = 200;
+const MAX_ITEMS = 6;
 
 type ResearchAction = BrowserResearchData["action"];
 
@@ -182,7 +182,7 @@ export function formatResearchResult(
   } else {
     const sourceLines =
       action === "network"
-        ? linesFromSnapshot(body).filter(isUsefulNetworkLine).slice(0, 20)
+        ? linesFromSnapshot(body).filter(isUsefulNetworkLine).slice(0, MAX_ITEMS)
         : linesFromSnapshot(body);
     items = sourceLines.map((line, index) => {
       const [text, clipped] = clip(line, MAX_ITEM_CHARS);
