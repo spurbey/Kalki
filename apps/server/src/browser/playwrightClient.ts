@@ -415,19 +415,25 @@ export class PlaywrightBrowser {
   }
 
   private async callTool(name: string, args: Record<string, unknown>) {
-    await this.connect();
-    if (!this.client) throw new Error("Playwright client is not connected");
-    try {
-      const result = PlaywrightToolResultSchema.parse(
-        await this.client.callTool({ name, arguments: args }),
-      );
-      if (result.isError) {
-        throw new Error(resultText(result) || `Playwright tool '${name}' failed`);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await this.connect();
+      if (!this.client) throw new Error("Playwright client is not connected");
+      try {
+        const result = PlaywrightToolResultSchema.parse(
+          await this.client.callTool({ name, arguments: args }),
+        );
+        if (result.isError) {
+          throw new Error(resultText(result) || `Playwright tool '${name}' failed`);
+        }
+        return result;
+      } catch (error) {
+        this.disconnect();
+        if (attempt === 0 && /session not found/i.test(errorMessage(error))) {
+          continue;
+        }
+        throw error;
       }
-      return result;
-    } catch (error) {
-      this.disconnect();
-      throw error;
     }
+    throw new Error(`Playwright tool '${name}' failed after reconnecting`);
   }
 }
