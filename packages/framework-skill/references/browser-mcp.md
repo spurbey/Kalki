@@ -32,9 +32,10 @@ Code Mode cannot call Playwright tools marked destructive, including `browser_na
 
 Prefer a stable JSON endpoint when reconnaissance proves one exists. Otherwise fetch reviewed HTML pages through `context.browser.fetch_pages`; `browser_network_state_set` only simulates online or offline state and is not a request-capture tool.
 
-### SSR & Embedded State Extraction
-* For modern SSR applications (e.g. Y Combinator / Inertia.js), the server embeds the complete page state directly into `<div id="app" data-page="...">` (or `<script id="__NEXT_DATA__">`). Extract this embedded JSON using standard Python `re`, `html.unescape`, and `json.loads(..., strict=False)` inside the operator.
-* **Anti-Pattern (External Search APIs)**: Do NOT attempt to capture or reverse-engineer search indices (e.g. Algolia `algolia.net/1/indexes`). They only return high-level summary cards and omit detailed sub-entity models (such as founder bios and profiles).
-* **Anti-Pattern (DOM Scraper Installation)**: Do NOT `pip install` `beautifulsoup4` or other heavy DOM parsers when embedded state can be extracted with standard library `re` and `json`.
+### Web Data Extraction Patterns
+* **Embedded State**: Modern web applications frequently embed structured state inside `<script type="application/json">`, `<script id="__NEXT_DATA__">`, `<script id="__NUXT_DATA__">`, or state attributes. Extract this embedded JSON using standard Python `re`, `html.unescape`, and `json.loads(..., strict=False)` inside the operator.
+* **Static HTML**: For server-rendered HTML tables, lists, or semantic cards, extract fields directly using regex or standard `html.parser`.
+* **Standard Library Preference**: Prefer Python standard library modules (`re`, `json`, `html`, `urllib.parse`) inside operators rather than installing heavy external DOM parsing packages.
+
 
 Do not save cookies, credentials, or complete responses. If no deterministic HTTPS data path is available, report that limitation instead of inventing selectors or unsupported browser automation.

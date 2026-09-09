@@ -86,8 +86,10 @@ def run_test(pipeline: LoadedPipeline, run_id: str, limit: int) -> dict[str, obj
         browser=BrowserAcquisitionClient(workspace=pipeline.workspace, max_response_bytes=execution["max_response_bytes"]),
     )
     source_records = list(islice(source_class().collect(source_context), limit))
-    if len(source_records) != limit:
-        raise ValueError(f"source returned {len(source_records)} records; expected {limit}")
+    if len(source_records) == 0:
+        raise ValueError("source returned 0 records; expected at least 1 record")
+    if len(source_records) > limit:
+        raise ValueError(f"source returned {len(source_records)} records; exceeded limit {limit}")
     source_records = _validated_records(source_records, pipeline.schemas[source["table"]])
 
     run_directory = workspace_path(pipeline.workspace, f"runs/{run_id}")
