@@ -1185,7 +1185,7 @@ export class WorkbookService {
       const table = item.schema.table;
       if (item.path !== `schemas/${table.slug}.yaml`) {
         throw new DomainError(
-          `Schema '${item.path}' has invalid table metadata`,
+          `Schema '${item.path}' path must match 'schemas/${table.slug}.yaml'`,
           "schema_validation_failed",
           400,
         );

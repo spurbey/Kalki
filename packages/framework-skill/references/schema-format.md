@@ -2,6 +2,8 @@
 
 Store one YAML file per table under `schemas/<table-slug>.yaml`.
 
+> **File Naming Rule**: The schema file name must strictly match `schemas/<table-slug>.yaml` where `<table-slug>` is the exact value of `table.slug` (kebab-case, lowercase letters, numbers, and hyphens). For example, if `table.slug` is `yc-space-founders`, the file MUST be stored at `schemas/yc-space-founders.yaml` (never with underscores).
+
 Required shape:
 
 ```yaml

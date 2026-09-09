@@ -41,6 +41,14 @@ def _schema_payload(workspace: Path, task_id: str) -> tuple[dict[str, object], i
     for path in paths:
         relative = path.relative_to(workspace).as_posix()
         schema = load_schema(workspace_path(workspace, relative))
+        table = schema.get("table") if isinstance(schema, dict) else None
+        slug = table.get("slug") if isinstance(table, dict) else None
+        expected = f"schemas/{slug}.yaml"
+        if relative != expected:
+            raise ValueError(
+                f"Schema file '{relative}' does not match table slug '{slug}'. "
+                f"Schema file must be named '{expected}'"
+            )
         digest = schema_hash(schema)
         registrations.append({"path": relative, "schema": schema, "schema_hash": digest})
         entries.append((relative, digest))

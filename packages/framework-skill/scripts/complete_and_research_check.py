@@ -114,11 +114,61 @@ def test_research_capture() -> None:
             assert "Hacker News" in (workspace / "research" / "captures" / "hn.html").read_text(encoding="utf-8")
 
 
+def test_schema_slug_path_validation() -> None:
+    from kalki_runtime.schema_cli import _schema_payload
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir)
+        schemas_dir = workspace / "schemas"
+        schemas_dir.mkdir(parents=True)
+
+        valid_schema_content = """version: 1
+table:
+  slug: yc-space-founders
+  name: YC Space Founders
+  kind: source
+  description: YC space tech founders.
+  primary_key: [company_slug, founder_name]
+columns:
+  - name: company_slug
+    type: string
+    nullable: false
+    description: Company slug.
+  - name: founder_name
+    type: string
+    nullable: false
+    description: Founder name.
+"""
+
+        # 1. Mismatched path (underscore instead of hyphen)
+        bad_path = schemas_dir / "yc_space_founders.yaml"
+        bad_path.write_text(valid_schema_content, encoding="utf-8")
+
+        try:
+            _schema_payload(workspace, "task_test_001")
+            assert False, "Should have raised ValueError on mismatched schema path"
+        except ValueError as exc:
+            assert "does not match table slug" in str(exc)
+
+        # 2. Correct path (matching slug exactly)
+        bad_path.unlink()
+        good_path = schemas_dir / "yc-space-founders.yaml"
+        good_path.write_text(valid_schema_content, encoding="utf-8")
+
+        payload, count, aggregate = _schema_payload(workspace, "task_test_001")
+        assert count == 1
+        assert payload["task_id"] == "task_test_001"
+        assert payload["schemas"][0]["path"] == "schemas/yc-space-founders.yaml"
+        assert len(aggregate) == 64
+
+
 def main() -> None:
     test_complete_test()
     test_research_capture()
+    test_schema_slug_path_validation()
     print("COMPLETE_AND_RESEARCH_CHECK_OK")
 
 
 if __name__ == "__main__":
     main()
+
