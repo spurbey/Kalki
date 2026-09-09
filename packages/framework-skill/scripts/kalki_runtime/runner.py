@@ -9,7 +9,7 @@ from itertools import islice
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .browser import BrowserAcquisitionClient
+from .browser import BrowserAcquisitionClient, call_mcp_tool
 from .contracts import RecordEnvelope, RunContext
 from .http_client import AllowlistedHttpClient, NoNetworkHttpClient
 from .provenance import Provenance, ProvenanceParent
@@ -161,6 +161,58 @@ def run_test(pipeline: LoadedPipeline, run_id: str, limit: int) -> dict[str, obj
     }
     write_json(manifest_path, manifest)
     return manifest
+
+
+def complete_test(workspace: Path, run_id: str) -> dict[str, object]:
+    run_directory = workspace_path(workspace, f"runs/{run_id}")
+    manifest_path = run_directory / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(f"test manifest was not found: {run_id}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("run_id") != run_id or manifest.get("mode") != "test":
+        raise ValueError("test manifest does not match the run")
+
+    tables = manifest.get("tables")
+    if not isinstance(tables, dict) or not tables:
+        raise ValueError("test manifest is missing tables")
+
+    samples: dict[str, list[dict[str, object]]] = {}
+    for table_slug, table_info in tables.items():
+        if not isinstance(table_info, dict) or "path" not in table_info:
+            continue
+        table_path = workspace_path(workspace, str(table_info["path"]))
+        if not table_path.is_file():
+            raise ValueError(f"table file was not found: {table_info['path']}")
+        records = _read_records(table_path)
+        samples[table_slug] = [envelope_dict(record) for record in records[:5]]
+
+    payload = {
+        "run_id": run_id,
+        "outcome": "completed",
+        "task_hash": manifest["task_hash"],
+        "schema_hash": manifest["schema_hash"],
+        "pipeline_hash": manifest["pipeline_hash"],
+        "manifest": manifest,
+        "samples": samples,
+        "table_counts": {},
+        "error": None,
+    }
+    result = call_mcp_tool("kalki-workbook", "complete_run", payload)
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        error = result.get("error") if isinstance(result, dict) else result
+        raise RuntimeError(f"complete_run failed: {error}")
+    data = result.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError("complete_run returned invalid data")
+    return {
+        "version": 1,
+        "ok": True,
+        "command": "complete",
+        "run_id": run_id,
+        "status": data.get("status", "completed"),
+        "task_state": data.get("task_state", "awaiting_production_confirmation"),
+        "next_action": data.get("next_action", "ask_production_review"),
+    }
 
 
 def _workbook_call(tool: str, body: dict[str, object]) -> dict[str, object]:

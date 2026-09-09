@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .pipeline_spec import load_pipeline
-from .runner import finalize_production, next_batch, run_test, start_production
+from .runner import complete_test, finalize_production, next_batch, run_test, start_production
 
 
 def _workspace(value: str | None) -> Path:
@@ -51,9 +51,16 @@ def main(argv: list[str] | None = None) -> int:
     finalize.add_argument("--workspace")
     finalize.add_argument("--run-id", required=True)
 
+    complete = commands.add_parser("complete")
+    complete.add_argument("--workspace")
+    complete.add_argument("--run-id", required=True)
+
     args = parser.parse_args(argv)
     try:
         workspace = _workspace(args.workspace)
+        if args.command == "complete":
+            _print(complete_test(workspace, _run_id(args.run_id)))
+            return 0
         if args.command == "next-batch":
             _print(next_batch(workspace, _run_id(args.run_id), args.limit))
             return 0
