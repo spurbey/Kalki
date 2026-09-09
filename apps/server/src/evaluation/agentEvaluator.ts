@@ -149,7 +149,15 @@ function failedToolResponse(event: WorkbookEvent): boolean {
   try {
     const parsed = objectValue(JSON.parse(content));
     if (!parsed) return false;
-    if (parsed.success === false) return true;
+    if (
+      parsed.ok === false ||
+      parsed.success === false ||
+      parsed.isError === true ||
+      parsed.is_error === true ||
+      (parsed.error !== undefined && parsed.error !== null)
+    ) {
+      return true;
+    }
     const response = objectValue(parsed.response);
     return typeof response?.exitCode === "number" && response.exitCode !== 0;
   } catch {

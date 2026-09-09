@@ -79,6 +79,28 @@ describe("agent evaluator", () => {
     expect(report.findings[1]?.evidence[0]?.seq).toBe(4);
   });
 
+  it("counts MCP error envelopes as failed responses", () => {
+    const report = evaluateWorkbook(
+      [
+        event(1, "agent.tool.response", {
+          event: {
+            type: "tool.response",
+            content: JSON.stringify({
+              error: [{ type: "text", text: "Session not found" }],
+            }),
+          },
+        }),
+      ],
+      {
+        workbook: { id: "wb_eval" },
+        tasks: [{ state: "exploring" }],
+      } as unknown as WorkbookSnapshot,
+    );
+
+    expect(report.tool_calls.failed_responses).toBe(1);
+    expect(report.findings[0]?.kind).toBe("tool_failure");
+  });
+
   it("uses canonical tool names and the latest task state", () => {
     const events = [
       event(1, "agent.turn.created", {
