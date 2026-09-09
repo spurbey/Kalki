@@ -32,4 +32,9 @@ Code Mode cannot call Playwright tools marked destructive, including `browser_na
 
 Prefer a stable JSON endpoint when reconnaissance proves one exists. Otherwise fetch reviewed HTML pages through `context.browser.fetch_pages`; `browser_network_state_set` only simulates online or offline state and is not a request-capture tool.
 
+### SSR & Embedded State Extraction
+* For modern SSR applications (e.g. Y Combinator / Inertia.js), the server embeds the complete page state directly into `<div id="app" data-page="...">` (or `<script id="__NEXT_DATA__">`). Extract this embedded JSON using standard Python `re`, `html.unescape`, and `json.loads(..., strict=False)` inside the operator.
+* **Anti-Pattern (External Search APIs)**: Do NOT attempt to capture or reverse-engineer search indices (e.g. Algolia `algolia.net/1/indexes`). They only return high-level summary cards and omit detailed sub-entity models (such as founder bios and profiles).
+* **Anti-Pattern (DOM Scraper Installation)**: Do NOT `pip install` `beautifulsoup4` or other heavy DOM parsers when embedded state can be extracted with standard library `re` and `json`.
+
 Do not save cookies, credentials, or complete responses. If no deterministic HTTPS data path is available, report that limitation instead of inventing selectors or unsupported browser automation.
