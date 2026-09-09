@@ -96,13 +96,27 @@ def main(argv: list[str] | None = None) -> int:
         _print(run_test(pipeline, run_id, limit))
         return 0
     except Exception as error:
+        err_dict: dict[str, object] = {
+            "code": "pipeline_failed",
+            "message": str(error),
+            "retryable": False,
+        }
+        try:
+            r_id = getattr(args, "run_id", None) or os.environ.get("KALKI_RUN_ID")
+            if r_id:
+                ws = _workspace(getattr(args, "workspace", None))
+                log_file = ws / f"runs/{r_id}/verbose.log"
+                if log_file.is_file():
+                    err_dict["log"] = f"runs/{r_id}/verbose.log"
+        except Exception:
+            pass
         _print(
             {
                 "version": 1,
                 "ok": False,
-                "command": args.command,
+                "command": getattr(args, "command", "unknown"),
                 "state": "failed",
-                "error": {"code": "pipeline_failed", "message": str(error), "retryable": False},
+                "error": err_dict,
             }
         )
         return 2

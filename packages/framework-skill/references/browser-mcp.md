@@ -12,6 +12,13 @@ Use the Kalki browser research tools for bounded reconnaissance and browser-back
 
 Each research response is bounded and structured as URL, title, summary, items, and a truncation flag. Full browser output remains outside the model context.
 
+### Reconnaissance Completion & Anti-Pagination Guardrails
+
+- **State-Driven Exit**: Take whatever navigation, search, or filter interaction steps are necessary to reach the target data. Reconnaissance has an unambiguous stopping condition: the moment target schema fields (e.g. price, availability, attributes, specs, or entity names) are observed on a representative item or payload, reconnaissance is complete.
+- **Immediate Physical Capture**: Persist the physical evidence sample immediately by running `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.research_cli capture --url <url> --out research/captures/<name>.html`.
+- **Exit Browser Immediately**: Leave the browser once the capture is saved. Author the schema and operator offline against the saved capture in Daytona.
+- **Anti-Pagination in Reconnaissance**: Never paginate search results (e.g. browsing page 2, 3, 4) or inspect multiple detail items interactively to gauge catalog volume or collect records. Multi-item collection and pagination belong strictly to the generated operator inside `pipeline_cli test`.
+
 For execution, keep the approval boundary explicit:
 
 1. The root coordinator uses `browser_research_navigate` to open the reviewed page or deterministic JSON endpoint immediately before the pipeline run.
