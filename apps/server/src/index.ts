@@ -22,6 +22,7 @@ import { browser, browserRoutes } from "./browser/routes.js";
 import { config } from "./config.js";
 import { openDatabase } from "./db/database.js";
 import { DomainError } from "./domain/errors.js";
+import { getPhaseGuidanceForQuestion } from "./domain/turnHooks.js";
 import { WorkbookService } from "./domain/workbookService.js";
 import { evaluateWorkbook } from "./evaluation/agentEvaluator.js";
 import { EventStore } from "./events/eventStore.js";
@@ -575,12 +576,16 @@ app.post(
     workbooks.markQuestionSubmitting(workbook.id, toolCallId.data, input.data);
     let answerTurn: TrueForgeTurnInput;
     try {
+      const guidance = getPhaseGuidanceForQuestion(pending.gate_kind);
+      const content = guidance
+        ? `${input.data.answer}\n${guidance}`
+        : input.data.answer;
       answerTurn = await trueForge.answerQuestion(
         workbook.trueforge_session_id,
         {
           threadId: pending.thread_id,
           toolCallId: pending.tool_call_id,
-          content: input.data.answer,
+          content,
         },
       );
     } catch (error) {

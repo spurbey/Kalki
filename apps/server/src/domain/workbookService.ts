@@ -49,6 +49,8 @@ import {
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
 import { DomainError } from "./errors.js";
+import { computeTaskHash } from "./taskContract.js";
+import { getPhaseGuidanceForStage } from "./turnHooks.js";
 
 function hashJson(value: unknown): string {
   return createHash("sha256")
@@ -1079,6 +1081,7 @@ export class WorkbookService {
       artifacts: snapshot.artifacts,
       generated_skills: snapshot.generated_skills,
       next_expected_action: nextExpectedAction,
+      phase_guidance: getPhaseGuidanceForStage(task ? task.state : "aligning"),
     });
   }
 
@@ -1097,9 +1100,7 @@ export class WorkbookService {
     const canonicalMarkdown = registration.task_markdown
       .replace(/^\uFEFF/, "")
       .replace(/\r\n?/g, "\n");
-    const actualHash = createHash("sha256")
-      .update(canonicalMarkdown, "utf8")
-      .digest("hex");
+    const actualHash = computeTaskHash(canonicalMarkdown);
 
     if (actualHash !== registration.task_hash) {
       throw new DomainError(
@@ -1123,6 +1124,23 @@ export class WorkbookService {
       task.task_markdown === canonicalMarkdown
     ) {
       return result;
+    }
+    if (task.task_hash && task.task_hash === actualHash) {
+      const timestamp = new Date().toISOString();
+      this.database
+        .prepare(
+          `UPDATE tasks
+           SET task_markdown = ?, task_path = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(canonicalMarkdown, registration.task_path, timestamp, task.id);
+      return RegisterTaskDataSchema.parse({
+        task_id: task.id,
+        state: task.state,
+        task_path: registration.task_path,
+        task_hash: task.task_hash,
+        next_action: task.state === "aligning" ? "ask_task_review" : "continue_workflow",
+      });
     }
     if (task.state !== "aligning") {
       throw new DomainError(
