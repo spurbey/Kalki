@@ -9,6 +9,8 @@ description: Build reviewed web-research workflows that keep raw data in files a
 
 - Work inside the current task workspace. Never assume `/workspace`.
 - Keep authored files under `task.md`, `research/`, `schemas/`, `operators/`, `pipelines/`, `runs/`, and `artifacts/`.
+- Living Memory Protocol: `task.md` is the agent's persistent state machine and working blackboard across turns. The top section contains the canonical task contract; below it, update `## Exploration Findings` and `## Implementation` at each phase transition before proceeding.
+- Deterministic Seed Strategy: When a directory/catalog is an SPA with 0 items in server HTML, use static reviewed seed URLs in `pipeline.yaml` or a reviewed sitemap index. Never spend turn budget reverse-engineering client search APIs (such as Algolia or Elasticsearch) or decrypting tokens.
 - Use Playwright for source access and deterministic Python for parsing, validation, and transformation.
 - Generate source-specific operators from observed evidence. Do not invent endpoints, fields, or selectors.
 - Keep full records in JSONL files. Return only compact manifests and bounded review samples.
@@ -33,18 +35,17 @@ description: Build reviewed web-research workflows that keep raw data in files a
    python -m pip install --disable-pip-version-check --quiet --target "$PWD/.kalki/deps" -r /opt/tf/skills/kalki-framework/requirements.txt
    ```
 
-3. Align the request and author `task.md`, then run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.task_cli register`. The command normalizes the file, computes its hash, and calls `register_task` once; do not construct that tool input by hand.
-4. Ask the canonical task review question and wait for the user.
-5. Explore the unfamiliar source with the compact `browser_research_*` tools. Take whatever navigation, search, or filter interaction steps are necessary to locate target data. Reconnaissance has a strict state-driven exit rule: the moment the target schema fields (e.g. price, availability, attributes, specs, or entity names) are observed on a representative item/endpoint (in the DOM or embedded JSON-LD/script state), reconnaissance is complete. Persist the physical evidence sample immediately by running `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.research_cli capture --url <url> --out research/captures/<name>.html`. Never paginate search results or browse multiple detail pages interactively to gauge catalog volume; multi-item collection and pagination belong strictly to the generated operator inside `pipeline_cli test`.
-
-6. Exit browser exploration immediately once the representative sample is captured. Author the complete schema set under `schemas/<table-slug>.yaml`, then run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.schema_cli register` (pass `--task-id` only when `.kalki/workspace.json` is unavailable). The command validates every schema, computes the contract values, and calls `register_schema` once. Do not construct the registration JSON by hand.
-7. Ask the schema review question and wait for the user.
-8. Generate operators from the recorded evidence and author one pipeline YAML using the canonical templates in `references/operator-contracts.md` and `references/pipeline-format.md`. Source-only workflows use `transforms: []`.
-9. Run the pipeline CLI with `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client"`.
-10. For a browser-backed source, use `browser_research_navigate` on the reviewed data URL immediately before execution. Create a test run with `start_run`, then run the CLI test command with `--limit 5`.
-11. Run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.pipeline_cli complete --run-id <id>`. The command reads the test manifest and bounded sample envelopes, submits `complete_run` with `table_counts: {}`, and advances the task to `awaiting_production_confirmation` without manual payload assembly. Test rows remain sandbox-only.
+3. Read `references/task-contract.md`. Align the request and author the canonical contract in `task.md`, then run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.task_cli register`. The command computes the canonical contract hash and registers the task once.
+4. Ask the canonical task review question and wait for user approval.
+5. Read `references/browser-mcp.md`. Explore the unfamiliar source with compact `browser_research_*` tools. Reconnaissance has a strict state-driven exit rule: the moment target schema fields (e.g. name, attributes, specs, batch, price) are observed on a representative entity, reconnaissance is complete. Persist the physical evidence sample immediately by running `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.research_cli capture --url <url> --out research/captures/<name>.html`. Never paginate search results or browse multiple detail pages interactively to gauge catalog volume.
+6. Immediately read `task.md` and append `## Exploration Findings`: record the representative URL, page architecture, data paths/selectors, verified schema fields, and seed discovery strategy.
+7. Read `references/schema-format.md`. Author `schemas/<table-slug>.yaml` from the verified fields recorded in `task.md`, then run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.schema_cli register`. Ask the schema review question and wait for user approval.
+8. Read `task.md` `## Exploration Findings` and `references/operator-contracts.md`. Author `operators/<table-slug>.py` offline in Python against the saved capture. Update `task.md` with `## Implementation` (operator paths, output keys, seed list). Author `pipelines/pipeline.yaml` using `references/pipeline-format.md`. Source-only workflows use `transforms: []`.
+9. Run the pipeline CLI lint with `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client"`.
+10. For a browser-backed source, use `browser_research_navigate` on the reviewed data URL immediately before execution. Create a test run with `start_run`, then run `pipeline_cli test --limit 15`.
+11. Run `PYTHONPATH="$PWD/.kalki/deps:/opt/tf/mcp-client" python -m kalki_runtime.pipeline_cli complete --run-id <id>`. The command reads the test manifest and sample envelopes, submits `complete_run` with `table_counts: {}`, and advances the task to `awaiting_production_confirmation`. Test rows remain sandbox-only.
 12. Create a production run with the same hashes. Only after `start_run` returns `awaiting_confirmation`, ask the explicit production review question and wait for the user's answer.
-13. After approval, run `start-production` with that production run ID. It checks authorization before reading the source.
+13. After approval, run `start-production` with that production run ID.
 14. Run `next-batch` until its compact manifest reports `state=ready_to_finalize`.
 15. Run `finalize`; it records artifact metadata and completes the production run.
 

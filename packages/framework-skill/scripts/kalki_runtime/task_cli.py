@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .browser import call_mcp_tool
-from .pipeline_spec import workspace_path
+from .pipeline_spec import canonical_task_contract, workspace_path
 
 
 def _workspace(value: str | None) -> Path:
@@ -34,7 +34,8 @@ def _register(workspace: Path, task_id: str, relative_path: str) -> dict[str, ob
     text = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
     if len(text.encode("utf-8")) > 65_536:
         raise ValueError("task.md exceeds the 64 KiB limit")
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    contract = canonical_task_contract(text)
+    digest = hashlib.sha256(contract.encode("utf-8")).hexdigest()
     result = call_mcp_tool(
         "kalki-workbook",
         "register_task",
