@@ -9,14 +9,14 @@ For source-only workflows (where the source table is the final output), use `tra
 ```yaml
 version: 1
 pipeline:
-  slug: hn-stories
-  name: Hacker News Stories Pipeline
+  slug: catalog-items
+  name: Catalog Items Pipeline
   task_path: task.md
   support_paths: []
 source:
-  id: collect-hn-stories
-  table: hn-stories
-  schema_path: schemas/hn-stories.yaml
+  id: collect-catalog-items
+  table: catalog-items
+  schema_path: schemas/catalog-items.yaml
   operator: operators/source.py:SourceOperator
   config: {}
 transforms: []
@@ -28,7 +28,7 @@ execution:
   request_backoff_seconds: 1.0
   max_response_bytes: 5000000
   allowed_hosts:
-    - news.ycombinator.com
+    - example.com
 ```
 
 Class references use `<workspace-relative-python-file>:<ClassName>`.

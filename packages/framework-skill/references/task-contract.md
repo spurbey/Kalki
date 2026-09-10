@@ -12,8 +12,6 @@ Authored during alignment and reviewed by the user. Kept concise and structured:
 - Acceptance checks
 - Explicit non-goals
 
-The canonical contract hash (`task_hash`) is computed strictly on this canonical section (everything above `---` or before `## Living Memory` / `## Exploration Findings`). Normalizes one UTF-8 BOM away and converts CRLF or CR to LF before computing SHA-256.
-
 Register the authored task from its workspace:
 
 ```bash
@@ -30,7 +28,7 @@ Appended and updated by the agent incrementally below `---` or `## Living Memory
   - `#### Verification`: Verified sample row envelopes and test status.
 - `### Progress State`: Active milestone checklist.
 
-Updating living memory preserves the canonical `task_hash`, allowing the agent to continuously maintain state across turns without invalidating user reviews or failing production gates.
+The server stores the task text and keeps any run-integrity checks internal. The agent does not calculate or submit hashes.
 
 Never place secrets, credentials, or raw multi-megabyte page dumps in `task.md`. Keep raw captures under `research/captures/`.
 
@@ -91,4 +89,3 @@ Never place secrets, credentials, or raw multi-megabyte page dumps in `task.md`.
 - Test run ID: <run-id>
 - Verified sample: <Compact JSON sample>
 ```
-

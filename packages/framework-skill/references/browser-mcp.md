@@ -40,8 +40,8 @@ Code Mode cannot call Playwright tools marked destructive, including `browser_na
 Prefer a stable JSON endpoint when reconnaissance proves one exists. Otherwise fetch reviewed HTML pages through `context.browser.fetch_pages`; `browser_network_state_set` only simulates online or offline state and is not a request-capture tool.
 
 ### Web Data Extraction Patterns
-* **Embedded State**: Modern web applications frequently embed structured state inside `<script type="application/json">`, `<script id="__NEXT_DATA__">`, `<script id="__NUXT_DATA__">`, or state attributes. Extract this embedded JSON using standard Python `re`, `html.unescape`, and `json.loads(..., strict=False)` inside the operator.
-* **Static HTML**: For server-rendered HTML tables, lists, or semantic cards, extract fields directly using regex or standard `html.parser`.
+* **Embedded State**: Pages may embed structured state inside JSON-LD, JSON script tags, or state attributes. Extract only the fields required by the schema with standard Python `re`, `html.unescape`, and `json.loads(..., strict=False)` inside the operator.
+* **Static HTML**: For server-rendered tables, lists, or semantic cards, extract the required fields directly with standard-library parsing.
 * **Standard Library Preference**: Prefer Python standard library modules (`re`, `json`, `html`, `urllib.parse`) inside operators rather than installing heavy external DOM parsing packages.
 
 

@@ -4,16 +4,16 @@ import { getPhaseGuidanceForQuestion, getPhaseGuidanceForStage } from "./turnHoo
 describe("turnHooks", () => {
   it("provides reconnaissance guidance for task_review", () => {
     const guidance = getPhaseGuidanceForQuestion("task_review");
-    expect(guidance).toContain("[Phase Guidance: Reconnaissance]");
-    expect(guidance).toContain("research_cli capture");
-    expect(guidance).toContain("## Exploration Findings");
+    expect(guidance).toContain("[Next phase: explore]");
+    expect(guidance).toContain("one representative page");
+    expect(guidance).toContain("task.md");
   });
 
   it("provides building guidance for schema_review", () => {
     const guidance = getPhaseGuidanceForQuestion("schema_review");
-    expect(guidance).toContain("[Phase Guidance: Building & Testing]");
-    expect(guidance).toContain("pipeline_cli test");
-    expect(guidance).toContain("## Implementation");
+    expect(guidance).toContain("[Next phase: build and test]");
+    expect(guidance).toContain("saved evidence");
+    expect(guidance).toContain("complete_run");
   });
 
   it("returns empty string for unknown question kind", () => {
@@ -21,7 +21,7 @@ describe("turnHooks", () => {
   });
 
   it("returns stage guidance for known stages", () => {
-    expect(getPhaseGuidanceForStage("exploring")).toContain("research_cli capture");
-    expect(getPhaseGuidanceForStage("building")).toContain("pipeline_cli test");
+    expect(getPhaseGuidanceForStage("exploring")).toContain("bounded capture");
+    expect(getPhaseGuidanceForStage("building")).toContain("lint and test");
   });
 });

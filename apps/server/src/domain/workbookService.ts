@@ -1102,47 +1102,26 @@ export class WorkbookService {
       .replace(/\r\n?/g, "\n");
     const actualHash = computeTaskHash(canonicalMarkdown);
 
-    if (actualHash !== registration.task_hash) {
-      throw new DomainError(
-        "task_hash does not match task_markdown",
-        "task_hash_mismatch",
-        400,
-      );
-    }
-
+    const nextState =
+      task.state === "aligning" ? "awaiting_task_confirmation" : task.state;
     const result = RegisterTaskDataSchema.parse({
       task_id: task.id,
-      state: "awaiting_task_confirmation" as const,
+      state: nextState,
       task_path: registration.task_path,
-      task_hash: registration.task_hash,
-      next_action: "ask_task_review",
+      next_action:
+        nextState === "awaiting_task_confirmation"
+          ? "ask_task_review"
+          : "continue_workflow",
     });
     if (
-      task.state === "awaiting_task_confirmation" &&
+      task.state === nextState &&
       task.task_path === registration.task_path &&
-      task.task_hash === registration.task_hash &&
+      task.task_hash === actualHash &&
       task.task_markdown === canonicalMarkdown
     ) {
       return result;
     }
-    if (task.task_hash && task.task_hash === actualHash) {
-      const timestamp = new Date().toISOString();
-      this.database
-        .prepare(
-          `UPDATE tasks
-           SET task_markdown = ?, task_path = ?, updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(canonicalMarkdown, registration.task_path, timestamp, task.id);
-      return RegisterTaskDataSchema.parse({
-        task_id: task.id,
-        state: task.state,
-        task_path: registration.task_path,
-        task_hash: task.task_hash,
-        next_action: task.state === "aligning" ? "ask_task_review" : "continue_workflow",
-      });
-    }
-    if (task.state !== "aligning") {
+    if (["completed", "failed", "cancelled"].includes(task.state)) {
       throw new DomainError(
         `Task cannot be registered while it is '${task.state}'`,
         "invalid_task_state",
@@ -1162,7 +1141,7 @@ export class WorkbookService {
           result.state,
           registration.task_path,
           canonicalMarkdown,
-          registration.task_hash,
+          actualHash,
           timestamp,
           task.id,
         );
@@ -1176,7 +1155,8 @@ export class WorkbookService {
           JSON.stringify({
             task_id: task.id,
             state: result.state,
-            task_hash: registration.task_hash,
+            memory_updated: task.state !== "aligning",
+            task_hash: actualHash,
           }),
           timestamp,
         );

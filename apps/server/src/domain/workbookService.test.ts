@@ -45,19 +45,10 @@ describe("workbook persistence", () => {
       const taskHash = createHash("sha256")
         .update(taskMarkdown.replace(/\r\n?/g, "\n"))
         .digest("hex");
-      expect(() =>
-        firstService.registerTask({
-          task_id: task.id,
-          task_path: "task.md",
-          task_markdown: taskMarkdown,
-          task_hash: "0".repeat(64),
-        }),
-      ).toThrow();
       const registration = {
         task_id: task.id,
         task_path: "task.md",
         task_markdown: taskMarkdown,
-        task_hash: taskHash,
       };
       firstService.registerTask(registration);
       firstService.registerTask(registration);
@@ -900,11 +891,10 @@ describe("workbook persistence", () => {
         workbook_id: workbook.id,
         task_id: task.id,
       });
-      expect(context.phase_guidance).toContain("Observe 1 representative entity");
+      expect(context.phase_guidance).toContain("bounded capture");
     } finally {
       database.close();
       rmSync(directory, { recursive: true, force: true });
     }
   });
 });
-

@@ -184,7 +184,6 @@ export const RegisterTaskDataSchema = z
     task_id: IdSchema,
     state: TaskStateSchema,
     task_path: WorkspaceRelativePathSchema,
-    task_hash: Sha256Schema,
     next_action: z.enum(['ask_task_review', 'continue_workflow']),
   })
   .strict();
@@ -537,7 +536,9 @@ export const RegisterTaskInputSchema = z
     task_id: IdSchema,
     task_path: WorkspaceRelativePathSchema,
     task_markdown: TaskMarkdownSchema,
-    task_hash: Sha256Schema,
+    // Kept optional so older sandbox runtimes can still call this tool. The
+    // server owns the stored fingerprint; agents only maintain task.md.
+    task_hash: Sha256Schema.optional(),
   })
   .strict();
 

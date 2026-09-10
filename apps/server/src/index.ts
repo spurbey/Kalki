@@ -576,7 +576,10 @@ app.post(
     workbooks.markQuestionSubmitting(workbook.id, toolCallId.data, input.data);
     let answerTurn: TrueForgeTurnInput;
     try {
-      const guidance = getPhaseGuidanceForQuestion(pending.gate_kind);
+      const guidance = getPhaseGuidanceForQuestion(
+        pending.gate_kind,
+        input.data.decision,
+      );
       const content = guidance
         ? `${input.data.answer}\n${guidance}`
         : input.data.answer;

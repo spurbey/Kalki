@@ -1,49 +1,59 @@
-/**
- * Phase Transition Hooks for TrueForge agent coordination.
- * Intercepts turn boundaries (canonical review gate answers and state transitions)
- * to deliver concise, state-aware execution guidance and guardrails.
- */
-
-export function getPhaseGuidanceForQuestion(gateKind: string): string {
+/** Short, automatic instructions appended after a review gate is answered. */
+export function getPhaseGuidanceForQuestion(
+  gateKind: string,
+  decision = "approve",
+): string {
+  if (decision !== "approve") {
+    return "\n[Phase hook]\nStop this phase. Re-read get_workbook_context and follow its next_expected_action.";
+  }
   if (gateKind === "task_review") {
     return [
-      "\n[Phase Guidance: Reconnaissance]",
-      "- Active Phase: exploring",
-      "- Goal: Navigate to 1 representative entity, observe target schema fields, and persist physical evidence using `python -m kalki_runtime.research_cli capture --url <url> --out research/captures/<name>.html`.",
-      "- Living Memory: Read task.md and append findings under `## Exploration Findings` (target URL, data paths/selectors, confirmed schema fields, seed discovery strategy).",
-      "- Next Action: Author `schemas/<table-slug>.yaml`, register with `python -m kalki_runtime.schema_cli register`, update `task.md` with schema table under `## Implementation -> ### Schema`, and call ask_user_question for schema review.",
-      "- Guardrails: Stop browser exploration immediately once 1 representative sample is captured. Never browse multiple detail pages interactively. Do NOT search for or reverse-engineer client search APIs (e.g. Algolia or Elasticsearch). Do NOT author operators or pipelines in this turn.",
+      "\n[Next phase: explore]",
+      "1. Call get_workbook_context, then read task.md.",
+      "2. Read references/browser-mcp.md only.",
+      "3. Inspect one representative page and save one bounded capture under research/.",
+      "4. Record only confirmed URLs, fields, and extraction path in task.md; then register the schema.",
+      "Do not build the operator or explore search/index endpoints yet.",
     ].join("\n");
   }
-
   if (gateKind === "schema_review") {
     return [
-      "\n[Phase Guidance: Building & Testing]",
-      "- Active Phase: building",
-      "- Goal: Read task.md `## Exploration Findings` and your saved capture. Author operators/<table_slug>.py offline against the saved capture, and pipelines/pipeline.yaml.",
-      "- Living Memory: Update task.md under `## Implementation` with operator files and seed list.",
-      "- Next Action:",
-      "  1. Navigate the shared browser tab to the reviewed source URL before running the pipeline.",
-      "  2. Execute test run: `PYTHONPATH=\"$PWD/.kalki/deps:/opt/tf/mcp-client\" python -m kalki_runtime.pipeline_cli test --limit 15`.",
-      "  3. Complete test run: `PYTHONPATH=\"$PWD/.kalki/deps:/opt/tf/mcp-client\" python -m kalki_runtime.pipeline_cli complete --run-id <id>`.",
-      "- Guardrails: Offline-first extraction from saved capture; do NOT query external search APIs. Test rows must remain sandbox-only (table_counts: {}). Stop at awaiting_production_confirmation.",
+      "\n[Next phase: build and test]",
+      "1. Call get_workbook_context and read task.md findings.",
+      "2. Read references/operator-contracts.md and references/pipeline-format.md.",
+      "3. Write the operator and pipeline from saved evidence; do not invent fields or URLs.",
+      "4. Run lint, then one bounded test run and complete_run.",
+      "Keep test rows in files; stop when the task reaches production review.",
     ].join("\n");
   }
-
+  if (gateKind === "production_review") {
+    return [
+      "\n[Next phase: production]",
+      "1. Call get_workbook_context and use the approved run id.",
+      "2. Check authorization before reading the source.",
+      "3. Process one batch at a time and publish only the returned records.",
+      "4. Finalize after the runner reports ready_to_finalize.",
+      "Do not change task, schema, or pipeline files during this run.",
+    ].join("\n");
+  }
   return "";
 }
 
 export function getPhaseGuidanceForStage(stage: string): string {
   switch (stage) {
     case "aligning":
-      return "Clarify scope, author task.md contract, and register via task_cli register.";
+      return "Author task.md from the user request, then run task_cli register.";
     case "exploring":
-      return "Observe 1 representative entity, capture sample with research_cli capture, append findings to task.md, and register schema.";
+      return "Read task.md, inspect one representative page, save a bounded capture, record findings, and register schemas.";
     case "building":
-      return "Read task.md findings, author operator and pipeline offline from capture, and run pipeline_cli test.";
+      return "Read task.md findings, author the operator and pipeline from saved evidence, then lint and test.";
     case "testing":
-      return "Complete test run via pipeline_cli complete (table_counts: {}). Do not request production approval.";
+      return "Complete the test run with table_counts {}. Do not request production approval yet.";
+    case "awaiting_production_confirmation":
+      return "Use the matching production run, ask for explicit approval, and wait.";
+    case "production_running":
+      return "Run the approved pipeline in batches, publish each batch, then finalize.";
     default:
-      return "Follow framework skill protocol.";
+      return "Call get_workbook_context and follow next_expected_action.";
   }
 }
