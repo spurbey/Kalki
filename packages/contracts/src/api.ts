@@ -175,6 +175,7 @@ export const GetWorkbookContextDataSchema = z
     artifacts: z.array(ArtifactSchema),
     generated_skills: z.array(GeneratedSkillSchema),
     next_expected_action: z.string().min(1).max(100),
+    phase_guidance: z.string().optional(),
   })
   .strict();
 
