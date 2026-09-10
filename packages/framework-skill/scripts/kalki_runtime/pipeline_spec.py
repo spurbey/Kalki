@@ -71,9 +71,33 @@ def _class_reference(workspace: Path, reference: object, method: str) -> str:
     return relative
 
 
+def canonical_task_contract(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    markers = [
+        "\n---\n",
+        "\n## Living Memory",
+        "\n## Exploration Findings",
+        "\n## Implementation",
+        "\n## Progress",
+    ]
+    earliest_idx = -1
+    for marker in markers:
+        idx = normalized.find(marker)
+        if idx != -1 and (earliest_idx == -1 or idx < earliest_idx):
+            earliest_idx = idx
+    contract = normalized[:earliest_idx] if earliest_idx != -1 else normalized
+    return contract.strip() + "\n"
+
+
 def _text_hash(path: Path) -> str:
     text = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _task_hash(path: Path) -> str:
+    text = path.read_text(encoding="utf-8-sig")
+    contract = canonical_task_contract(text)
+    return hashlib.sha256(contract.encode("utf-8")).hexdigest()
 
 
 def load_pipeline(workspace: Path, relative_path: str) -> LoadedPipeline:
@@ -143,7 +167,7 @@ def load_pipeline(workspace: Path, relative_path: str) -> LoadedPipeline:
         {"path": relative, "sha256": _text_hash(workspace_path(workspace, relative))}
         for relative in sorted(implementation_files)
     ]
-    task_hash = _text_hash(workspace_path(workspace, task_path))
+    task_hash = _task_hash(workspace_path(workspace, task_path))
     return LoadedPipeline(
         workspace=workspace,
         relative_path=relative_path,

@@ -12,11 +12,19 @@ const coordinatorInstructions = [
   "Your first shell command must read /opt/tf/skills/kalki-framework/SKILL.md.",
   "Run pwd before creating task files and use that working directory.",
   "Use workbook MCP for every durable product change.",
+  "Use the preloaded bounded browser research tools for reconnaissance; never use raw Playwright tools or deferred tool discovery.",
   "Reuse the task id returned by get_workbook_context after retries, compaction, or recovery.",
+  "The task title and objective returned by get_workbook_context are authoritative; preserve that scope and do not infer a different task from the workbook title.",
+  "When the task is aligning, author task.md from the persisted objective; do not search uploads or inspect runtime internals unless context reports a missing dependency.",
   "Reuse the current Playwright tab instead of opening duplicate tabs.",
   "Narrate each stage and major tool action with a short user-facing intent or observation.",
   "Summarize reasoning without exposing private chain-of-thought.",
   "Use ask_user_question for task, schema, production, and skill-promotion review.",
+  "During exploration, inspect one representative page with compact research tools, save one bounded capture, and record findings in task.md.",
+  "Treat task.md as the only working memory: update it with confirmed findings and current files, then run task_cli register. Do not create progress.json or repeat unchanged reads.",
+  "After authoring or updating task.md, run python -m kalki_runtime.task_cli register from the task workspace; never hand-build or directly call register_task.",
+  "Register schemas by running python -m kalki_runtime.schema_cli register from the task workspace; never hand-build or directly call register_schema with schema objects.",
+  "Generated source operators fetch remaining pages with context.browser.fetch_pages in batches of at most five; do not inspect runtime internals to solve that handoff.",
   "Never ask for production approval until start_run has created the matching production run.",
   "Never treat silence, timeout, tool approval, or auto-continue as user consent.",
   "Keep raw rows in files and return compact manifests only.",
@@ -126,14 +134,6 @@ export class TrueForgeClient {
           require_approval_for_tools: [],
           preload: true,
         },
-        {
-          name: "playwright",
-          enable_tools: ["@all"],
-          disable_tools: [],
-          preload_tools: [],
-          require_approval_for_tools: [],
-          preload: false,
-        },
       ],
       ...(this.options.attachFrameworkSkill
         ? { skills: [{ name: this.options.frameworkSkillName }] }
@@ -141,7 +141,7 @@ export class TrueForgeClient {
       config: {
         iteration_limit: 100,
         sandbox: { enabled: true, file_downloads: true },
-        dynamic_sub_agents: { enabled: true },
+        dynamic_sub_agents: { enabled: false },
         context_management: {
           compaction: { enabled: true },
           large_tool_response: { enabled: true },

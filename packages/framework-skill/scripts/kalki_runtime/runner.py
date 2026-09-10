@@ -7,14 +7,24 @@ import json
 from datetime import datetime, timezone
 from itertools import islice
 from pathlib import Path
+import traceback
 from urllib.parse import urlparse
 
+from .browser import BrowserAcquisitionClient, call_mcp_tool
 from .contracts import RecordEnvelope, RunContext
 from .http_client import AllowlistedHttpClient, NoNetworkHttpClient
 from .provenance import Provenance, ProvenanceParent
 from .pipeline_spec import LoadedPipeline, load_pipeline, workspace_path
 from .schema_loader import canonical_json, dedupe_key, hash_json, validate_data
 from .serialization import envelope_dict, write_json, write_jsonl, write_text
+
+
+def _append_verbose(run_dir: Path, message: str) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    verbose_log = run_dir / "verbose.log"
+    ts = datetime.now(timezone.utc).isoformat()
+    with open(verbose_log, "a", encoding="utf-8") as f:
+        f.write(f"[{ts}] {message}\n")
 
 
 def _load_class(workspace: Path, reference: str) -> type:
@@ -63,102 +73,170 @@ def _validated_records(records: list[RecordEnvelope], schema: dict[str, object])
 
 
 def run_test(pipeline: LoadedPipeline, run_id: str, limit: int) -> dict[str, object]:
+    run_directory = workspace_path(pipeline.workspace, f"runs/{run_id}")
+    _append_verbose(run_directory, f"Pipeline Runner Test Started: run_id={run_id}, limit={limit}")
+    _append_verbose(run_directory, f"Pipeline: {pipeline.relative_path}, task_hash={pipeline.task_hash}")
     source = pipeline.data["source"]
     transforms = pipeline.data["transforms"]
     execution = pipeline.data["execution"]
-    client = AllowlistedHttpClient(
-        allowed_hosts=set(execution["allowed_hosts"]),
-        timeout=execution["request_timeout_seconds"],
-        max_bytes=execution["max_response_bytes"],
-    )
-    source_class = _load_class(pipeline.workspace, source["operator"])
-    source_context = RunContext(
-        workspace=pipeline.workspace,
-        run_id=run_id,
-        mode="test",
-        step_id=source["id"],
-        input_table=None,
-        output_table=source["table"],
-        config=source["config"],
-        limit=limit,
-        http=client,
-    )
-    source_records = list(islice(source_class().collect(source_context), limit))
-    if len(source_records) != limit:
-        raise ValueError(f"source returned {len(source_records)} records; expected {limit}")
-    source_records = _validated_records(source_records, pipeline.schemas[source["table"]])
-
-    run_directory = workspace_path(pipeline.workspace, f"runs/{run_id}")
-    source_path = run_directory / "source.jsonl"
-    source_sha256 = write_jsonl(source_path, source_records)
-    table_records: dict[str, list[RecordEnvelope]] = {source["table"]: source_records}
-    table_files: dict[str, dict[str, object]] = {
-        source["table"]: {
-            "path": source_path.relative_to(pipeline.workspace).as_posix(),
-            "sha256": source_sha256,
-            "count": len(source_records),
-        }
-    }
-
-    for transform in transforms:
-        transform_class = _load_class(pipeline.workspace, transform["transformer"])
-        context = RunContext(
+    _append_verbose(run_directory, f"Source operator: {source['operator']} -> Table: {source['table']}")
+    try:
+        client = AllowlistedHttpClient(
+            allowed_hosts=set(execution["allowed_hosts"]),
+            timeout=execution["request_timeout_seconds"],
+            max_bytes=execution["max_response_bytes"],
+        )
+        source_class = _load_class(pipeline.workspace, source["operator"])
+        source_context = RunContext(
             workspace=pipeline.workspace,
             run_id=run_id,
             mode="test",
-            step_id=transform["id"],
-            input_table=transform["input_table"],
-            output_table=transform["output_table"],
-            config=transform["config"],
-            limit=None,
-            http=NoNetworkHttpClient(),
+            step_id=source["id"],
+            input_table=None,
+            output_table=source["table"],
+            config=source["config"],
+            limit=limit,
+            http=client,
+            browser=BrowserAcquisitionClient(workspace=pipeline.workspace, max_response_bytes=execution["max_response_bytes"]),
         )
-        records = list(transform_class().transform(iter(table_records[transform["input_table"]]), context))
-        records = _validated_records(records, pipeline.schemas[transform["output_table"]])
-        output_path = run_directory / "derived" / f"{transform['output_table']}.jsonl"
-        table_files[transform["output_table"]] = {
-            "path": output_path.relative_to(pipeline.workspace).as_posix(),
-            "sha256": write_jsonl(output_path, records),
-            "count": len(records),
-        }
-        table_records[transform["output_table"]] = records
+        source_records = list(islice(source_class().collect(source_context), limit))
+        _append_verbose(run_directory, f"Source collected {len(source_records)} records")
+        if len(source_records) == 0:
+            raise ValueError("source returned 0 records; expected at least 1 record")
+        if len(source_records) > limit:
+            raise ValueError(f"source returned {len(source_records)} records; exceeded limit {limit}")
+        source_records = _validated_records(source_records, pipeline.schemas[source["table"]])
+        _append_verbose(run_directory, f"Source records validated successfully against schema {source['table']}")
 
-    checkpoint_path = run_directory / "checkpoint.json"
+        source_path = run_directory / "source.jsonl"
+        source_sha256 = write_jsonl(source_path, source_records)
+        table_records: dict[str, list[RecordEnvelope]] = {source["table"]: source_records}
+        table_files: dict[str, dict[str, object]] = {
+            source["table"]: {
+                "path": source_path.relative_to(pipeline.workspace).as_posix(),
+                "sha256": source_sha256,
+                "count": len(source_records),
+            }
+        }
+
+        for transform in transforms:
+            _append_verbose(run_directory, f"Running transform: {transform['id']} ({transform['transformer']})")
+            transform_class = _load_class(pipeline.workspace, transform["transformer"])
+            context = RunContext(
+                workspace=pipeline.workspace,
+                run_id=run_id,
+                mode="test",
+                step_id=transform["id"],
+                input_table=transform["input_table"],
+                output_table=transform["output_table"],
+                config=transform["config"],
+                limit=None,
+                http=NoNetworkHttpClient(),
+            )
+            records = list(transform_class().transform(iter(table_records[transform["input_table"]]), context))
+            records = _validated_records(records, pipeline.schemas[transform["output_table"]])
+            output_path = run_directory / "derived" / f"{transform['output_table']}.jsonl"
+            table_files[transform["output_table"]] = {
+                "path": output_path.relative_to(pipeline.workspace).as_posix(),
+                "sha256": write_jsonl(output_path, records),
+                "count": len(records),
+            }
+            table_records[transform["output_table"]] = records
+            _append_verbose(run_directory, f"Transform {transform['id']} produced {len(records)} records")
+
+        checkpoint_path = run_directory / "checkpoint.json"
+        manifest_path = run_directory / "manifest.json"
+        checkpoint = {
+            "version": 1,
+            "run_id": run_id,
+            "mode": "test",
+            "pipeline_path": pipeline.relative_path,
+            "phase": "ready_to_finalize",
+            "tables": table_files,
+        }
+        write_json(checkpoint_path, checkpoint)
+        manifest = {
+            "version": 1,
+            "ok": True,
+            "command": "test",
+            "run_id": run_id,
+            "mode": "test",
+            "state": "ready_to_finalize",
+            "task_hash": pipeline.task_hash,
+            "schema_hash": pipeline.schema_hash,
+            "pipeline_hash": pipeline.pipeline_hash,
+            "counts": {
+                "source_records": len(source_records),
+                "derived_records": sum(len(records) for table, records in table_records.items() if table != source["table"]),
+            },
+            "paths": {
+                "manifest": manifest_path.relative_to(pipeline.workspace).as_posix(),
+                "checkpoint": checkpoint_path.relative_to(pipeline.workspace).as_posix(),
+            },
+            "tables": table_files,
+            "done": True,
+            "next_action": "review_test",
+            "error": None,
+            "log": (run_directory / "verbose.log").relative_to(pipeline.workspace).as_posix(),
+        }
+        write_json(manifest_path, manifest)
+        _append_verbose(run_directory, f"Test run ready to finalize: {manifest['counts']}")
+        return manifest
+    except Exception as exc:
+        _append_verbose(run_directory, f"ERROR: {exc}\n{traceback.format_exc()}")
+        raise
+
+
+def complete_test(workspace: Path, run_id: str) -> dict[str, object]:
+    run_directory = workspace_path(workspace, f"runs/{run_id}")
     manifest_path = run_directory / "manifest.json"
-    checkpoint = {
-        "version": 1,
+    if not manifest_path.is_file():
+        raise ValueError(f"test manifest was not found: {run_id}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("run_id") != run_id or manifest.get("mode") != "test":
+        raise ValueError("test manifest does not match the run")
+
+    tables = manifest.get("tables")
+    if not isinstance(tables, dict) or not tables:
+        raise ValueError("test manifest is missing tables")
+
+    samples: dict[str, list[dict[str, object]]] = {}
+    for table_slug, table_info in tables.items():
+        if not isinstance(table_info, dict) or "path" not in table_info:
+            continue
+        table_path = workspace_path(workspace, str(table_info["path"]))
+        if not table_path.is_file():
+            raise ValueError(f"table file was not found: {table_info['path']}")
+        records = _read_records(table_path)
+        samples[table_slug] = [envelope_dict(record) for record in records[:5]]
+
+    payload = {
         "run_id": run_id,
-        "mode": "test",
-        "pipeline_path": pipeline.relative_path,
-        "phase": "ready_to_finalize",
-        "tables": table_files,
-    }
-    write_json(checkpoint_path, checkpoint)
-    manifest = {
-        "version": 1,
-        "ok": True,
-        "command": "test",
-        "run_id": run_id,
-        "mode": "test",
-        "state": "ready_to_finalize",
-        "task_hash": pipeline.task_hash,
-        "schema_hash": pipeline.schema_hash,
-        "pipeline_hash": pipeline.pipeline_hash,
-        "counts": {
-            "source_records": len(source_records),
-            "derived_records": sum(len(records) for table, records in table_records.items() if table != source["table"]),
-        },
-        "paths": {
-            "manifest": manifest_path.relative_to(pipeline.workspace).as_posix(),
-            "checkpoint": checkpoint_path.relative_to(pipeline.workspace).as_posix(),
-        },
-        "tables": table_files,
-        "done": True,
-        "next_action": "review_test",
+        "outcome": "completed",
+        "task_hash": manifest["task_hash"],
+        "schema_hash": manifest["schema_hash"],
+        "pipeline_hash": manifest["pipeline_hash"],
+        "manifest": manifest,
+        "samples": samples,
+        "table_counts": {},
         "error": None,
     }
-    write_json(manifest_path, manifest)
-    return manifest
+    result = call_mcp_tool("kalki-workbook", "complete_run", payload)
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        error = result.get("error") if isinstance(result, dict) else result
+        raise RuntimeError(f"complete_run failed: {error}")
+    data = result.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError("complete_run returned invalid data")
+    return {
+        "version": 1,
+        "ok": True,
+        "command": "complete",
+        "run_id": run_id,
+        "status": data.get("status", "completed"),
+        "task_state": data.get("task_state", "awaiting_production_confirmation"),
+        "next_action": data.get("next_action", "ask_production_review"),
+    }
 
 
 def _workbook_call(tool: str, body: dict[str, object]) -> dict[str, object]:
@@ -400,6 +478,7 @@ def start_production(pipeline: LoadedPipeline, run_id: str) -> dict[str, object]
             timeout=execution["request_timeout_seconds"],
             max_bytes=execution["max_response_bytes"],
         ),
+        browser=BrowserAcquisitionClient(workspace=pipeline.workspace, max_response_bytes=execution["max_response_bytes"]),
     )
     source_records = _validated_records(list(source_class().collect(context)), pipeline.schemas[source["table"]])
     if not source_records:

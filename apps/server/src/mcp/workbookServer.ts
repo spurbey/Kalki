@@ -1,5 +1,11 @@
 import { serve } from '@hono/node-server';
 import {
+  BrowserFetchPagesInputSchema,
+  BrowserResearchClickInputSchema,
+  BrowserResearchEvaluateInputSchema,
+  BrowserResearchNavigateInputSchema,
+  BrowserResearchNetworkInputSchema,
+  BrowserResearchSnapshotInputSchema,
   CompleteRunInputSchema,
   GetWorkbookContextInputSchema,
   ProductionAuthorizationInputSchema,
@@ -16,6 +22,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { config } from '../config.js';
+import type { PlaywrightBrowser } from '../browser/playwrightClient.js';
 import { DomainError } from '../domain/errors.js';
 import type { WorkbookService } from '../domain/workbookService.js';
 
@@ -27,9 +34,9 @@ function response(result: unknown) {
   };
 }
 
-function execute(action: () => unknown) {
+async function execute(action: () => unknown | Promise<unknown>) {
   try {
-    return response({ ok: true, data: action() });
+    return response({ ok: true, data: await action() });
   } catch (error) {
     if (error instanceof DomainError) {
       return response({
@@ -46,12 +53,17 @@ function execute(action: () => unknown) {
     console.error(error);
     return {
       isError: true,
-      content: [{ type: 'text' as const, text: 'Workbook tool failed' }],
+      content: [
+        {
+          type: 'text' as const,
+          text: (error instanceof Error ? error.message : 'Workbook tool failed').slice(0, 1000),
+        },
+      ],
     };
   }
 }
 
-function createServer(workbooks: WorkbookService) {
+function createServer(workbooks: WorkbookService, browser: PlaywrightBrowser) {
   const server = new McpServer({ name: 'kalki-workbook', version: '0.1.0' });
 
   server.registerTool(
@@ -62,6 +74,84 @@ function createServer(workbooks: WorkbookService) {
       annotations: READ_ONLY_TOOL_ANNOTATIONS,
     },
     (input) => execute(() => workbooks.getWorkbookContext(GetWorkbookContextInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'browser_fetch_pages',
+    {
+      description:
+        'Fetch up to five HTTP pages through the current shared browser tab and return bounded bodies for a generated operator.',
+      inputSchema: BrowserFetchPagesInputSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    },
+    (input) => execute(() => browser.fetchPages(BrowserFetchPagesInputSchema.parse(input))),
+  );
+
+  server.registerTool(
+    'browser_research_navigate',
+    {
+      description:
+        'Navigate the shared headed browser and return a compact page observation; full browser output is kept out of the model context.',
+      inputSchema: BrowserResearchNavigateInputSchema,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchNavigate(BrowserResearchNavigateInputSchema.parse(input)),
+      ),
+  );
+
+  server.registerTool(
+    'browser_research_snapshot',
+    {
+      description:
+        'Return a bounded accessibility observation of the current shared browser page with useful structure, links, and controls.',
+      inputSchema: BrowserResearchSnapshotInputSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchSnapshot(BrowserResearchSnapshotInputSchema.parse(input)),
+      ),
+  );
+
+  server.registerTool(
+    'browser_research_click',
+    {
+      description:
+        'Click one reference from the latest browser observation and return a fresh compact observation.',
+      inputSchema: BrowserResearchClickInputSchema,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchClick(BrowserResearchClickInputSchema.parse(input)),
+      ),
+  );
+
+  server.registerTool(
+    'browser_research_network',
+    {
+      description:
+        'List compact non-static page requests, or inspect one promising request part without returning unbounded headers or bodies.',
+      inputSchema: BrowserResearchNetworkInputSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchNetwork(BrowserResearchNetworkInputSchema.parse(input)),
+      ),
+  );
+
+  server.registerTool(
+    'browser_research_evaluate',
+    {
+      description:
+        'Run a bounded page extraction function and return a clipped result. Extract only fields needed to understand the source; never return full HTML.',
+      inputSchema: BrowserResearchEvaluateInputSchema,
+    },
+    (input) =>
+      execute(() =>
+        browser.researchEvaluate(BrowserResearchEvaluateInputSchema.parse(input)),
+      ),
   );
 
   server.registerTool(
@@ -132,7 +222,7 @@ function createServer(workbooks: WorkbookService) {
   return server;
 }
 
-export function startWorkbookMcp(workbooks: WorkbookService) {
+export function startWorkbookMcp(workbooks: WorkbookService, browser: PlaywrightBrowser) {
   if (!config.mcpToken) {
     console.warn('KALKI_MCP_TOKEN is unset; workbook MCP is disabled');
     return;
@@ -154,7 +244,7 @@ export function startWorkbookMcp(workbooks: WorkbookService) {
     }),
   );
   app.all('/mcp', async (c) => {
-    const server = createServer(workbooks);
+    const server = createServer(workbooks, browser);
     const transport = new WebStandardStreamableHTTPServerTransport({
       enableJsonResponse: true,
     });

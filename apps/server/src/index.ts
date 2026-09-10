@@ -13,15 +13,18 @@ import {
   TrueForgeTurnResponseSchema,
   WorkbookResponseSchema,
   WorkbookHeartbeatSchema,
+  WorkbookEvaluationResponseSchema,
   WorkbookSnapshotResponseSchema,
 } from "@kalki/contracts";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { browserRoutes } from "./browser/routes.js";
+import { browser, browserRoutes } from "./browser/routes.js";
 import { config } from "./config.js";
 import { openDatabase } from "./db/database.js";
 import { DomainError } from "./domain/errors.js";
+import { getPhaseGuidanceForQuestion } from "./domain/turnHooks.js";
 import { WorkbookService } from "./domain/workbookService.js";
+import { evaluateWorkbook } from "./evaluation/agentEvaluator.js";
 import { EventStore } from "./events/eventStore.js";
 import { startWorkbookMcp } from "./mcp/workbookServer.js";
 import { TrueForgeClient } from "./trueforge/sessionClient.js";
@@ -43,7 +46,7 @@ const turningWorkbooks = new Set<string>();
 const turns = new TurnMonitor(workbooks, events, trueForge);
 
 turns.start();
-startWorkbookMcp(workbooks);
+startWorkbookMcp(workbooks, browser);
 app.route("/", browserRoutes);
 
 function trueForgeUnavailable(error: unknown) {
@@ -242,6 +245,30 @@ app.get("/api/v1/workbooks/:workbookId/events", (c) => {
       await stream.sleep(1000);
     }
   });
+});
+
+app.get("/api/v1/workbooks/:workbookId/evaluation", (c) => {
+  const workbookId = IdSchema.safeParse(c.req.param("workbookId"));
+  if (!workbookId.success) {
+    return c.json(
+      ApiErrorResponseSchema.parse({
+        error: {
+          code: "invalid_request",
+          message: "Invalid workbook id",
+          path: ["workbookId"],
+          details: {},
+          retryable: false,
+        },
+      }),
+      400,
+    );
+  }
+  const snapshot = workbooks.getSnapshot(workbookId.data);
+  return c.json(
+    WorkbookEvaluationResponseSchema.parse({
+      data: evaluateWorkbook(events.listHistory(workbookId.data).events, snapshot),
+    }),
+  );
 });
 
 app.get("/api/v1/tables/:tableId/rows", (c) => {
@@ -549,12 +576,19 @@ app.post(
     workbooks.markQuestionSubmitting(workbook.id, toolCallId.data, input.data);
     let answerTurn: TrueForgeTurnInput;
     try {
+      const guidance = getPhaseGuidanceForQuestion(
+        pending.gate_kind,
+        input.data.decision,
+      );
+      const content = guidance
+        ? `${input.data.answer}\n${guidance}`
+        : input.data.answer;
       answerTurn = await trueForge.answerQuestion(
         workbook.trueforge_session_id,
         {
           threadId: pending.thread_id,
           toolCallId: pending.tool_call_id,
-          content: input.data.answer,
+          content,
         },
       );
     } catch (error) {

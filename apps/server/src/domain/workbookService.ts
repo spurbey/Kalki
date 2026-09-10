@@ -49,6 +49,8 @@ import {
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
 import { DomainError } from "./errors.js";
+import { computeTaskHash } from "./taskContract.js";
+import { getPhaseGuidanceForStage } from "./turnHooks.js";
 
 function hashJson(value: unknown): string {
   return createHash("sha256")
@@ -1050,6 +1052,8 @@ export class WorkbookService {
       task: task
         ? {
             id: task.id,
+            title: task.title,
+            objective: task.objective,
             state: task.state,
             task_path: task.task_path,
             task_hash: task.task_hash,
@@ -1077,6 +1081,7 @@ export class WorkbookService {
       artifacts: snapshot.artifacts,
       generated_skills: snapshot.generated_skills,
       next_expected_action: nextExpectedAction,
+      phase_guidance: getPhaseGuidanceForStage(task ? task.state : "aligning"),
     });
   }
 
@@ -1095,34 +1100,28 @@ export class WorkbookService {
     const canonicalMarkdown = registration.task_markdown
       .replace(/^\uFEFF/, "")
       .replace(/\r\n?/g, "\n");
-    const actualHash = createHash("sha256")
-      .update(canonicalMarkdown, "utf8")
-      .digest("hex");
+    const actualHash = computeTaskHash(canonicalMarkdown);
 
-    if (actualHash !== registration.task_hash) {
-      throw new DomainError(
-        "task_hash does not match task_markdown",
-        "task_hash_mismatch",
-        400,
-      );
-    }
-
+    const nextState =
+      task.state === "aligning" ? "awaiting_task_confirmation" : task.state;
     const result = RegisterTaskDataSchema.parse({
       task_id: task.id,
-      state: "awaiting_task_confirmation" as const,
+      state: nextState,
       task_path: registration.task_path,
-      task_hash: registration.task_hash,
-      next_action: "ask_task_review",
+      next_action:
+        nextState === "awaiting_task_confirmation"
+          ? "ask_task_review"
+          : "continue_workflow",
     });
     if (
-      task.state === "awaiting_task_confirmation" &&
+      task.state === nextState &&
       task.task_path === registration.task_path &&
-      task.task_hash === registration.task_hash &&
+      task.task_hash === actualHash &&
       task.task_markdown === canonicalMarkdown
     ) {
       return result;
     }
-    if (task.state !== "aligning") {
+    if (["completed", "failed", "cancelled"].includes(task.state)) {
       throw new DomainError(
         `Task cannot be registered while it is '${task.state}'`,
         "invalid_task_state",
@@ -1142,7 +1141,7 @@ export class WorkbookService {
           result.state,
           registration.task_path,
           canonicalMarkdown,
-          registration.task_hash,
+          actualHash,
           timestamp,
           task.id,
         );
@@ -1156,7 +1155,8 @@ export class WorkbookService {
           JSON.stringify({
             task_id: task.id,
             state: result.state,
-            task_hash: registration.task_hash,
+            memory_updated: task.state !== "aligning",
+            task_hash: actualHash,
           }),
           timestamp,
         );
@@ -1183,7 +1183,7 @@ export class WorkbookService {
       const table = item.schema.table;
       if (item.path !== `schemas/${table.slug}.yaml`) {
         throw new DomainError(
-          `Schema '${item.path}' has invalid table metadata`,
+          `Schema '${item.path}' path must match 'schemas/${table.slug}.yaml'`,
           "schema_validation_failed",
           400,
         );

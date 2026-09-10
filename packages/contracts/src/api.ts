@@ -25,7 +25,12 @@ import {
   WorkbookSnapshotSchema,
   WorkspaceRelativePathSchema,
 } from './domain.js';
-import { RunModeSchema, RunStatusSchema, TableKindSchema } from './states.js';
+import {
+  RunModeSchema,
+  RunStatusSchema,
+  TableKindSchema,
+  TaskStateSchema,
+} from './states.js';
 
 const TaskMarkdownSchema = z
   .string()
@@ -132,6 +137,8 @@ export const GetWorkbookContextDataSchema = z
     }),
     task: TaskSchema.pick({
       id: true,
+      title: true,
+      objective: true,
       state: true,
       task_path: true,
       task_hash: true,
@@ -168,16 +175,16 @@ export const GetWorkbookContextDataSchema = z
     artifacts: z.array(ArtifactSchema),
     generated_skills: z.array(GeneratedSkillSchema),
     next_expected_action: z.string().min(1).max(100),
+    phase_guidance: z.string().optional(),
   })
   .strict();
 
 export const RegisterTaskDataSchema = z
   .object({
     task_id: IdSchema,
-    state: z.literal('awaiting_task_confirmation'),
+    state: TaskStateSchema,
     task_path: WorkspaceRelativePathSchema,
-    task_hash: Sha256Schema,
-    next_action: z.literal('ask_task_review'),
+    next_action: z.enum(['ask_task_review', 'continue_workflow']),
   })
   .strict();
 
@@ -233,6 +240,32 @@ const BrowserUrlSchema = z
     return protocol === 'http:' || protocol === 'https:';
   }, 'Browser URL must use HTTP or HTTPS');
 
+export const BrowserFetchPagesInputSchema = z
+  .object({
+    urls: z.array(BrowserUrlSchema).min(1).max(5),
+    max_chars: z.number().int().min(10_000).max(120_000).default(80_000),
+  })
+  .strict();
+
+const BrowserFetchedPageSchema = z
+  .object({
+    url: BrowserUrlSchema,
+    status: z.number().int().min(0).max(999).nullable(),
+    content_type: z.string().max(200).nullable(),
+    body_base64: z.string().max(200_000).nullable(),
+    body_encoding: z.literal('gzip+base64').nullable(),
+    body_chars: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+    truncated: z.boolean(),
+    error: z.string().max(1000).nullable(),
+  })
+  .strict();
+
+export const BrowserFetchPagesDataSchema = z
+  .object({
+    pages: z.array(BrowserFetchedPageSchema).min(1).max(5),
+  })
+  .strict();
+
 export const BrowserStatusSchema = z
   .object({
     available: z.boolean(),
@@ -250,6 +283,60 @@ export const BrowserNavigateInputSchema = z.object({ url: BrowserUrlSchema }).st
 
 export const BrowserRunCodeInputSchema = z
   .object({ code: z.string().min(1).max(30_000) })
+  .strict();
+
+const BrowserResearchTargetSchema = z.string().trim().min(1).max(500);
+
+export const BrowserResearchNavigateInputSchema = z
+  .object({ url: BrowserUrlSchema })
+  .strict();
+
+export const BrowserResearchSnapshotInputSchema = z
+  .object({
+    target: BrowserResearchTargetSchema.optional(),
+    depth: z.number().int().min(1).max(8).optional(),
+  })
+  .strict();
+
+export const BrowserResearchClickInputSchema = z
+  .object({
+    target: BrowserResearchTargetSchema,
+    element: BrowserResearchTargetSchema.optional(),
+  })
+  .strict();
+
+export const BrowserResearchNetworkInputSchema = z
+  .object({
+    request_index: z.number().int().positive().optional(),
+    part: z
+      .enum([
+        'request-headers',
+        'request-body',
+        'response-headers',
+        'response-body',
+      ])
+      .optional(),
+    filter: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
+export const BrowserResearchEvaluateInputSchema = z
+  .object({
+    function: z.string().trim().min(1).max(12_000),
+    target: BrowserResearchTargetSchema.optional(),
+    element: BrowserResearchTargetSchema.optional(),
+  })
+  .strict();
+
+export const BrowserResearchDataSchema = z
+  .object({
+    action: z.enum(['navigate', 'snapshot', 'click', 'network', 'evaluate']),
+    url: z.string().max(4000).nullable(),
+    title: z.string().max(1000).nullable(),
+    summary: z.string().max(8000),
+    items: z.array(z.string().max(1000)).max(100),
+    truncated: z.boolean(),
+  })
   .strict();
 
 const BrowserCoordinateSchema = z.number().int().min(0).max(10_000);
@@ -327,6 +414,70 @@ export const TrueForgeTurnListResponseSchema = z
   })
   .passthrough();
 export const WorkbookSnapshotResponseSchema = z.object({ data: WorkbookSnapshotSchema }).strict();
+const EvaluationEvidenceSchema = z
+  .object({
+    seq: z.number().int().positive(),
+    turn_id: IdSchema.nullable(),
+  })
+  .strict();
+const EvaluationRepeatSchema = z
+  .object({
+    action: z.string().min(1).max(200),
+    count: z.number().int().min(2),
+    first_seq: z.number().int().positive(),
+    last_seq: z.number().int().positive(),
+    evidence: z.array(EvaluationEvidenceSchema).max(10),
+  })
+  .strict();
+const EvaluationFindingSchema = z
+  .object({
+    kind: z.enum(['repetition', 'tool_failure', 'model_protocol', 'incomplete']),
+    message: z.string().min(1).max(500),
+    evidence: z.array(EvaluationEvidenceSchema).max(10),
+  })
+  .strict();
+export const WorkbookEvaluationSchema = z
+  .object({
+    workbook_id: IdSchema,
+    task_id: IdSchema.nullable(),
+    event_count: z.number().int().nonnegative(),
+    turn_count: z.number().int().nonnegative(),
+    tool_calls: z
+      .object({
+        total: z.number().int().nonnegative(),
+        unique_signatures: z.number().int().nonnegative(),
+        failed_responses: z.number().int().nonnegative(),
+        action_counts: z
+          .array(
+            z
+              .object({
+                action: z.string().min(1).max(200),
+                count: z.number().int().positive(),
+              })
+              .strict(),
+          )
+          .max(15),
+      })
+      .strict(),
+    workflow: z
+      .object({
+        task_state: TaskStateSchema.nullable(),
+        checkpoints: z.array(z.string().min(1).max(100)).max(30),
+        terminal_status: TrueForgeTurnStatusSchema.nullable(),
+      })
+      .strict(),
+    repetition: z
+      .object({
+        consecutive: z.array(EvaluationRepeatSchema).max(10),
+        repeated_reads: z.array(EvaluationRepeatSchema).max(10),
+      })
+      .strict(),
+    findings: z.array(EvaluationFindingSchema).max(10),
+  })
+  .strict();
+export const WorkbookEvaluationResponseSchema = z
+  .object({ data: WorkbookEvaluationSchema })
+  .strict();
 export const TableRowsQuerySchema = z
   .object({
     run_id: IdSchema,
@@ -385,7 +536,9 @@ export const RegisterTaskInputSchema = z
     task_id: IdSchema,
     task_path: WorkspaceRelativePathSchema,
     task_markdown: TaskMarkdownSchema,
-    task_hash: Sha256Schema,
+    // Kept optional so older sandbox runtimes can still call this tool. The
+    // server owns the stored fingerprint; agents only maintain task.md.
+    task_hash: Sha256Schema.optional(),
   })
   .strict();
 
@@ -516,6 +669,12 @@ export const WorkbookToolResultSchema = z.discriminatedUnion('ok', [
 
 export const WorkbookToolNameSchema = z.enum([
   'get_workbook_context',
+  'browser_fetch_pages',
+  'browser_research_navigate',
+  'browser_research_snapshot',
+  'browser_research_click',
+  'browser_research_network',
+  'browser_research_evaluate',
   'register_task',
   'register_schema',
   'start_run',
@@ -548,6 +707,45 @@ export const WORKBOOK_TOOL_DEFINITIONS = [
       'Read compact workbook state without returning formal table rows.',
     inputSchema: GetWorkbookContextInputSchema,
     annotations: READ_ONLY_TOOL_ANNOTATIONS,
+  },
+  {
+    name: 'browser_fetch_pages',
+    description:
+      'Fetch up to five HTTP pages through the current shared browser tab and return bounded bodies for a generated operator.',
+    inputSchema: BrowserFetchPagesInputSchema,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+  },
+  {
+    name: 'browser_research_navigate',
+    description:
+      'Navigate the shared headed browser and return a compact page observation. Full snapshots stay outside the model context.',
+    inputSchema: BrowserResearchNavigateInputSchema,
+  },
+  {
+    name: 'browser_research_snapshot',
+    description:
+      'Return a bounded accessibility observation of the current shared browser page, including useful headings, links, and controls.',
+    inputSchema: BrowserResearchSnapshotInputSchema,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+  },
+  {
+    name: 'browser_research_click',
+    description:
+      'Click one reference from the latest browser observation and return a fresh compact observation.',
+    inputSchema: BrowserResearchClickInputSchema,
+  },
+  {
+    name: 'browser_research_network',
+    description:
+      'List compact non-static requests from the current page, or inspect one promising request part without returning unbounded headers or bodies.',
+    inputSchema: BrowserResearchNetworkInputSchema,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+  },
+  {
+    name: 'browser_research_evaluate',
+    description:
+      'Run a bounded page extraction function and return a clipped result. Extract only the fields needed to understand the source; never return full HTML.',
+    inputSchema: BrowserResearchEvaluateInputSchema,
   },
   {
     name: 'register_task',
@@ -607,8 +805,16 @@ export type StartRunData = z.infer<typeof StartRunDataSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type BrowserStatus = z.infer<typeof BrowserStatusSchema>;
 export type BrowserNavigateInput = z.infer<typeof BrowserNavigateInputSchema>;
+export type BrowserFetchPagesInput = z.infer<typeof BrowserFetchPagesInputSchema>;
+export type BrowserFetchPagesData = z.infer<typeof BrowserFetchPagesDataSchema>;
 export type BrowserRunCodeInput = z.infer<typeof BrowserRunCodeInputSchema>;
 export type BrowserInteractionInput = z.infer<typeof BrowserInteractionInputSchema>;
+export type BrowserResearchNavigateInput = z.infer<typeof BrowserResearchNavigateInputSchema>;
+export type BrowserResearchSnapshotInput = z.infer<typeof BrowserResearchSnapshotInputSchema>;
+export type BrowserResearchClickInput = z.infer<typeof BrowserResearchClickInputSchema>;
+export type BrowserResearchNetworkInput = z.infer<typeof BrowserResearchNetworkInputSchema>;
+export type BrowserResearchEvaluateInput = z.infer<typeof BrowserResearchEvaluateInputSchema>;
+export type BrowserResearchData = z.infer<typeof BrowserResearchDataSchema>;
 export type BrowserStatusResponse = z.infer<typeof BrowserStatusResponseSchema>;
 export type WorkbookResponse = z.infer<typeof WorkbookResponseSchema>;
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
@@ -619,6 +825,10 @@ export type TrueForgeTurnListPagination = z.infer<
 >;
 export type TrueForgeTurnListResponse = z.infer<typeof TrueForgeTurnListResponseSchema>;
 export type WorkbookSnapshotResponse = z.infer<typeof WorkbookSnapshotResponseSchema>;
+export type WorkbookEvaluation = z.infer<typeof WorkbookEvaluationSchema>;
+export type WorkbookEvaluationResponse = z.infer<
+  typeof WorkbookEvaluationResponseSchema
+>;
 export type TableRowsQuery = z.infer<typeof TableRowsQuerySchema>;
 export type TableRowsResponse = z.infer<typeof TableRowsResponseSchema>;
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;

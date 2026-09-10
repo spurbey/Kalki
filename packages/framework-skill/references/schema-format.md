@@ -2,6 +2,8 @@
 
 Store one YAML file per table under `schemas/<table-slug>.yaml`.
 
+> **File Naming Rule**: The schema file name must strictly match `schemas/<table-slug>.yaml` where `<table-slug>` is the exact value of `table.slug` (kebab-case, lowercase letters, numbers, and hyphens).
+
 Required shape:
 
 ```yaml

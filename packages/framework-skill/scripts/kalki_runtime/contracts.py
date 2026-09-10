@@ -45,6 +45,7 @@ class RunContext:
     config: Mapping[str, JsonValue]
     limit: int | None
     http: SafeHttpClient
+    browser: Any = None
 
 
 class SourceOperator(Protocol):

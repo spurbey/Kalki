@@ -1,13 +1,29 @@
 import {
+  BrowserResearchClickInputSchema,
+  BrowserResearchEvaluateInputSchema,
+  BrowserResearchNavigateInputSchema,
+  BrowserResearchNetworkInputSchema,
+  BrowserResearchSnapshotInputSchema,
+  BrowserFetchPagesDataSchema,
+  BrowserFetchPagesInputSchema,
   BrowserRunCodeInputSchema,
   PlaywrightToolResultSchema,
   type BrowserInteractionInput,
+  type BrowserFetchPagesData,
+  type BrowserFetchPagesInput,
+  type BrowserResearchClickInput,
+  type BrowserResearchData,
+  type BrowserResearchEvaluateInput,
+  type BrowserResearchNavigateInput,
+  type BrowserResearchNetworkInput,
+  type BrowserResearchSnapshotInput,
   type BrowserStatus,
   type PlaywrightToolResult,
 } from "@kalki/contracts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { config } from "../config.js";
+import { formatResearchResult } from "./researchFormatter.js";
 
 type BrowserTab = {
   index: number;
@@ -60,6 +76,24 @@ function errorMessage(error: unknown): string {
     0,
     1000,
   );
+}
+
+function parseResultJson(result: PlaywrightToolResult): unknown {
+  let text = resultText(result).trim();
+  text = text.replace(/^###\s+Result(?:\s+-[^\n]*)?\s*\n?/i, "").trim();
+  const nextSection = text.search(
+    /\n###\s+(?:Ran Playwright code|Page|Snapshot|Events)\b/i,
+  );
+  if (nextSection >= 0) text = text.slice(0, nextSection).trim();
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+  } catch (error) {
+    throw new Error(
+      `Playwright returned a non-JSON fetch result: ${errorMessage(error)}`,
+    );
+  }
 }
 
 export class PlaywrightBrowser {
@@ -122,6 +156,147 @@ export class PlaywrightBrowser {
         screenshot_at: this.screenshotAt,
         error: null,
       } satisfies BrowserStatus;
+    });
+  }
+
+  async researchNavigate(
+    input: BrowserResearchNavigateInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchNavigateInputSchema.parse(input);
+      await this.callTool("browser_navigate", { url: requested.url });
+      const snapshot = await this.callTool("browser_snapshot", { depth: 5 });
+      return formatResearchResult("navigate", resultText(snapshot), requested.url);
+    });
+  }
+
+  async researchSnapshot(
+    input: BrowserResearchSnapshotInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchSnapshotInputSchema.parse(input);
+      const current = await this.prepareResearchPage();
+      const result = await this.callTool("browser_snapshot", {
+        ...(requested.target ? { target: requested.target } : {}),
+        ...(requested.depth ? { depth: requested.depth } : {}),
+      });
+      return formatResearchResult("snapshot", resultText(result), current?.url || null);
+    });
+  }
+
+  async researchClick(
+    input: BrowserResearchClickInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchClickInputSchema.parse(input);
+      const current = await this.prepareResearchPage();
+      await this.callTool("browser_click", {
+        target: requested.target,
+        ...(requested.element ? { element: requested.element } : {}),
+      });
+      const snapshot = await this.callTool("browser_snapshot", { depth: 5 });
+      return formatResearchResult("click", resultText(snapshot), current?.url || null);
+    });
+  }
+
+  async researchNetwork(
+    input: BrowserResearchNetworkInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchNetworkInputSchema.parse(input);
+      const current = await this.prepareResearchPage();
+      const result = requested.request_index
+        ? await this.callTool("browser_network_request", {
+            index: requested.request_index,
+            ...(requested.part ? { part: requested.part } : {}),
+          })
+        : await this.callTool("browser_network_requests", {
+            static: false,
+            ...(requested.filter ? { filter: requested.filter } : {}),
+          });
+      return formatResearchResult("network", resultText(result), current?.url || null);
+    });
+  }
+
+  async researchEvaluate(
+    input: BrowserResearchEvaluateInput,
+  ): Promise<BrowserResearchData> {
+    return this.serialize(async () => {
+      const requested = BrowserResearchEvaluateInputSchema.parse(input);
+      const current = await this.prepareResearchPage();
+      const result = await this.callTool("browser_evaluate", {
+        function: requested.function,
+        ...(requested.target ? { target: requested.target } : {}),
+        ...(requested.element ? { element: requested.element } : {}),
+      });
+      return formatResearchResult("evaluate", resultText(result), current?.url || null);
+    });
+  }
+
+  async fetchPages(input: BrowserFetchPagesInput): Promise<BrowserFetchPagesData> {
+    return this.serialize(async () => {
+      const requested = BrowserFetchPagesInputSchema.parse(input);
+      const tabs = await this.readTabs();
+      const aligned = await this.alignResearchTab(tabs);
+      const current = aligned.find((tab) => tab.current) ?? aligned[0];
+      if (!current || current.url === "about:blank") {
+        throw new Error(
+          "Navigate the shared browser to a reviewed source before fetching pages",
+        );
+      }
+
+      const code = `async (page) => page.evaluate(async ({ urls, maxChars }) => {
+        const gzipBase64 = async (text) => {
+          const stream = new CompressionStream("gzip");
+          const writer = stream.writable.getWriter();
+          const output = new Response(stream.readable).arrayBuffer();
+          await writer.write(new TextEncoder().encode(text));
+          await writer.close();
+          const bytes = new Uint8Array(await output);
+          let binary = "";
+          for (let index = 0; index < bytes.length; index += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+          }
+          return btoa(binary);
+        };
+        const pages = await Promise.all(urls.map(async (url) => {
+          try {
+            const response = await fetch(url, { credentials: "include" });
+            const body = await response.text();
+            const boundedBody = body.slice(0, maxChars);
+            return {
+              url,
+              status: response.status,
+              content_type: response.headers.get("content-type"),
+              body_base64: await gzipBase64(boundedBody),
+              body_encoding: "gzip+base64",
+              body_chars: body.length,
+              truncated: body.length > maxChars,
+              error: null,
+            };
+          } catch (error) {
+            return {
+              url,
+              status: null,
+              content_type: null,
+              body_base64: null,
+              body_encoding: null,
+              body_chars: null,
+              truncated: false,
+              error: String(error).slice(0, 1000),
+            };
+          }
+        }));
+        return { pages };
+      }, ${JSON.stringify({
+        urls: requested.urls,
+        maxChars: requested.max_chars,
+      })})`;
+      const result = await this.callTool(
+        "browser_run_code_unsafe",
+        BrowserRunCodeInputSchema.parse({ code }),
+      );
+      return BrowserFetchPagesDataSchema.parse(parseResultJson(result));
     });
   }
 
@@ -211,6 +386,18 @@ export class PlaywrightBrowser {
     return parseTabs(resultText(result));
   }
 
+  private async prepareResearchPage(): Promise<BrowserTab | null> {
+    const tabs = await this.readTabs();
+    const aligned = await this.alignResearchTab(tabs);
+    const current = aligned.find((tab) => tab.current) ?? aligned[0] ?? null;
+    if (!current || current.url === "about:blank") {
+      throw new Error(
+        "Navigate the shared browser to a source before using research tools",
+      );
+    }
+    return current;
+  }
+
   private async alignResearchTab(tabs: BrowserTab[]): Promise<BrowserTab[]> {
     const current = tabs.find((tab) => tab.current);
     const research =
@@ -228,14 +415,25 @@ export class PlaywrightBrowser {
   }
 
   private async callTool(name: string, args: Record<string, unknown>) {
-    await this.connect();
-    if (!this.client) throw new Error("Playwright client is not connected");
-    const result = PlaywrightToolResultSchema.parse(
-      await this.client.callTool({ name, arguments: args }),
-    );
-    if (result.isError) {
-      throw new Error(resultText(result) || `Playwright tool '${name}' failed`);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await this.connect();
+      if (!this.client) throw new Error("Playwright client is not connected");
+      try {
+        const result = PlaywrightToolResultSchema.parse(
+          await this.client.callTool({ name, arguments: args }),
+        );
+        if (result.isError) {
+          throw new Error(resultText(result) || `Playwright tool '${name}' failed`);
+        }
+        return result;
+      } catch (error) {
+        this.disconnect();
+        if (attempt === 0 && /session not found/i.test(errorMessage(error))) {
+          continue;
+        }
+        throw error;
+      }
     }
-    return result;
+    throw new Error(`Playwright tool '${name}' failed after reconnecting`);
   }
 }
