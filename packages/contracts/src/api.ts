@@ -182,10 +182,10 @@ export const GetWorkbookContextDataSchema = z
 export const RegisterTaskDataSchema = z
   .object({
     task_id: IdSchema,
-    state: z.literal('awaiting_task_confirmation'),
+    state: TaskStateSchema,
     task_path: WorkspaceRelativePathSchema,
     task_hash: Sha256Schema,
-    next_action: z.literal('ask_task_review'),
+    next_action: z.enum(['ask_task_review', 'continue_workflow']),
   })
   .strict();
 

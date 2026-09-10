@@ -841,4 +841,70 @@ describe("workbook persistence", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it("safely updates living memory in task.md during active workflow phases without resetting state", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kalki-lm-"));
+    const path = join(directory, "kalki.db");
+    const database = openDatabase(path);
+
+    try {
+      const service = new WorkbookService(database);
+      const workbook = service.createWorkbook({ title: "Living Memory Test" });
+      const task = service.createTask(workbook.id, {
+        slug: "lm-test",
+        title: "LM Test",
+        objective: "Test living memory persistence across turns.",
+      });
+
+      const baseContract = "# Task Contract\n\nTest living memory persistence.\n";
+      const initialHash = createHash("sha256")
+        .update(baseContract)
+        .digest("hex");
+
+      // Turn 1: Initial Registration
+      const reg1 = service.registerTask({
+        task_id: task.id,
+        task_path: "task.md",
+        task_markdown: baseContract,
+        task_hash: initialHash,
+      });
+      expect(reg1.state).toBe("awaiting_task_confirmation");
+      expect(reg1.next_action).toBe("ask_task_review");
+
+      // Simulate approving task review -> advances to 'exploring'
+      database
+        .prepare("UPDATE tasks SET state = 'exploring' WHERE id = ?")
+        .run(task.id);
+
+      // Turn 2: Append Exploration Findings to task.md
+      const withFindings = `${baseContract}\n---\n## Living Memory\n### Exploration Findings\n- Representative URL: https://example.com/items/1\n- Fields observed: id, title, price\n`;
+
+      const reg2 = service.registerTask({
+        task_id: task.id,
+        task_path: "task.md",
+        task_markdown: withFindings,
+        task_hash: initialHash, // Canonical hash remains identical!
+      });
+
+      expect(reg2.state).toBe("exploring");
+      expect(reg2.next_action).toBe("continue_workflow");
+
+      // Verify that database reflects the updated markdown while preserving state & hash
+      const snapshot = service.getSnapshot(workbook.id);
+      expect(snapshot.tasks[0]?.task_markdown).toBe(withFindings);
+      expect(snapshot.tasks[0]?.task_hash).toBe(initialHash);
+      expect(snapshot.tasks[0]?.state).toBe("exploring");
+
+      // Verify workbook context contains phase guidance
+      const context = service.getWorkbookContext({
+        workbook_id: workbook.id,
+        task_id: task.id,
+      });
+      expect(context.phase_guidance).toContain("Observe 1 representative entity");
+    } finally {
+      database.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
+
