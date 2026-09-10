@@ -11,7 +11,7 @@ export function getPhaseGuidanceForQuestion(gateKind: string): string {
       "- Active Phase: exploring",
       "- Goal: Navigate to 1 representative entity, observe target schema fields, and persist physical evidence using `python -m kalki_runtime.research_cli capture --url <url> --out research/captures/<name>.html`.",
       "- Living Memory: Read task.md and append findings under `## Exploration Findings` (target URL, data paths/selectors, confirmed schema fields, seed discovery strategy).",
-      "- Next Action: Author `schemas/<table-slug>.yaml`, register with `python -m kalki_runtime.schema_cli register`, and call ask_user_question for schema review.",
+      "- Next Action: Author `schemas/<table-slug>.yaml`, register with `python -m kalki_runtime.schema_cli register`, update `task.md` with schema table under `## Implementation -> ### Schema`, and call ask_user_question for schema review.",
       "- Guardrails: Stop browser exploration immediately once 1 representative sample is captured. Never browse multiple detail pages interactively. Do NOT search for or reverse-engineer client search APIs (e.g. Algolia or Elasticsearch). Do NOT author operators or pipelines in this turn.",
     ].join("\n");
   }
